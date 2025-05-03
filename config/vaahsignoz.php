@@ -4,13 +4,14 @@ return [
     // Master switch to enable/disable the package
     'enabled' => env('VAAHSIGNOZ_ENABLED', true),
 
-    // OpenTelemetry/SigNoz endpoint
-    'endpoint' => env('VAAHSIGNOZ_ENDPOINT', 'http://localhost:4318/v1/traces'),
+    // OpenTelemetry config (now via env vars!)
+    // You can use these in TracerFactory with `putenv()` or just document them.
+    'otel' => [
+        'endpoint' => env('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318/v1/traces'),
+        'service_name' => env('OTEL_SERVICE_NAME', 'laravel-app'),
+    ],
 
-    // Service name for traces
-    'service_name' => env('VAAHSIGNOZ_SERVICE_NAME', 'laravel-app'),
-
-    // Which components to instrument
+    // Which features to instrument
     'instrumentations' => [
         'cache'      => env('VAAHSIGNOZ_INSTRUMENT_CACHE', true),
         'client'     => env('VAAHSIGNOZ_INSTRUMENT_CLIENT', true),

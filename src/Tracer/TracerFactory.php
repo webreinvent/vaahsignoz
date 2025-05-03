@@ -2,7 +2,14 @@
 
 namespace WebReinvent\VaahSignoz\Tracer;
 
-use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
+use OpenTelemetry\Contrib\Otlp\SpanExporter;
+use OpenTelemetry\SDK\Common\Export\Http\PsrTransport;
+use GuzzleHttp\Client;
+use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
+use OpenTelemetry\SDK\Trace\TracerProvider;
+use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
+
+use GuzzleHttp\Psr7\HttpFactory;
 
 class TracerFactory
 {
@@ -14,31 +21,41 @@ class TracerFactory
             return self::$tracer;
         }
 
-        if (!class_exists('\OpenTelemetry\Exporter\Otlp\SpanExporter')) {
-            throw new VaahSignozException(
-                "OpenTelemetry SDK is missing. Please run `composer require open-telemetry/sdk open-telemetry/exporter-otlp`."
-            );
-        }
-
-        $config = config('vaahsignoz');
+        $config = config('vaahsignoz.otel');
         $endpoint = $config['endpoint'] ?? 'http://localhost:4318/v1/traces';
         $serviceName = $config['service_name'] ?? 'laravel-app';
 
-        $exporter = new \OpenTelemetry\Exporter\Otlp\SpanExporter(
-            endpoint: $endpoint,
-            contentType: 'application/json'
+        $client = new Client();
+        $httpFactory = new HttpFactory();
+
+        // Create the TransportInterface implementation (PsrTransport)
+        $transport = new PsrTransport(
+            $client,              // ClientInterface
+            $httpFactory,         // RequestFactoryInterface
+            $httpFactory,         // StreamFactoryInterface
+            $endpoint,            // string endpoint
+            'application/x-protobuf', // string contentType
+            [],                   // array headers
+            [],                   // array compression
+            100,                  // int retryDelay (ms)
+            3                     // int maxRetries
         );
 
-        $provider = new \OpenTelemetry\SDK\Trace\TracerProvider(
-            new \OpenTelemetry\SDK\Trace\SimpleSpanProcessor($exporter),
-            null,
-            null,
-            null,
-            null,
-            ['service.name' => $serviceName]
+        // Construct the exporter with the transport
+        $exporter = new SpanExporter($transport);
+
+        // Optionally enrich resource attributes (service.name, etc)
+        $resource = ResourceInfoFactory::defaultResource()->merge(ResourceInfoFactory::defaultResource());
+
+        // Set up the tracer provider
+        $tracerProvider = new TracerProvider(
+            new SimpleSpanProcessor($exporter), // span processor(s)
+            null,                               // sampler (optional, null for default)
+            $resource                           // resource info
         );
 
-        self::$tracer = $provider->getTracer('webreinvent.vaahsignoz');
+        self::$tracer = $tracerProvider->getTracer($serviceName);
+
         return self::$tracer;
     }
 }
