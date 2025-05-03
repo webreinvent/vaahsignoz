@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'endpoint' => env('SIGNOZ_ENDPOINT', 'http://localhost:4317'),
-    'service_name' => env('APP_NAME', 'laravel-app'),
-    'app_version' => env('APP_VERSION', '1.0.0'),
+    'enabled' => env('SIGNOZ_ENABLED', false),
+    'service_name' => env('SIGNOZ_SERVICE_NAME', 'laravel-app'),
+    'endpoint' => env('SIGNOZ_ENDPOINT', 'http://localhost:4318/v1/traces'),
 ];
