@@ -1,62 +1,118 @@
-# VaahSignoz
-Laravel package to integrate SigNoz with laravel applications
+# vaahsignoz
 
+**Automatic OpenTelemetry instrumentation for Laravel applications with SigNoz integration.**
+
+## Features
+
+- Enable/disable tracing via config
+- Per-feature instrumentation toggle: cache, client, exceptions, log, query
+- All OpenTelemetry endpoint/service info via configuration
+- Detailed Laravel events integration
+- Facade for easy access/control
+- Extensible, robust, and follows Laravel package best practices
 
 ## Installation
 
-- Require the package via Composer:
-```shell
+```bash
 composer require webreinvent/vaahsignoz
 ```
-- Publish the configuration:
 
-```shell
-php artisan vendor:publish --provider="WebReinvent\VaahSignoz\VaahSignozServiceProvider" --tag="config"
+Publish the config:
+
+```bash
+php artisan vendor:publish --provider="Webreinvent\VaahSignoz\VaahSignozServiceProvider" --tag="config"
 ```
-
-- Set environment variables in your `.env` file:
-```dotenv
-SIGNOZ_ENDPOINT=http://localhost:4317
-APP_VERSION=1.0.0
-```
-
 ## Configuration
-The config file `config/vaahsignoz.php`:
+
+Edit `config/vaahsignoz.php`
 
 ```php
 return [
-    'endpoint' => env('SIGNOZ_ENDPOINT', 'http://localhost:4317'),
-    'service_name' => env('APP_NAME', 'laravel-app'),
-    'app_version' => env('APP_VERSION', '1.0.0'),
+    'enabled' => env('VAAHSIGNOZ_ENABLED', true),
+    'endpoint' => env('VAAHSIGNOZ_ENDPOINT', 'http://localhost:4318/v1/traces'),
+    'service_name' => env('VAAHSIGNOZ_SERVICE_NAME', 'laravel-app'),
+    'instrumentations' => [
+        'cache'      => env('VAAHSIGNOZ_INSTRUMENT_CACHE', true),
+        'client'     => env('VAAHSIGNOZ_INSTRUMENT_CLIENT', true),
+        'log'        => env('VAAHSIGNOZ_INSTRUMENT_LOG', true),
+        'exception'  => env('VAAHSIGNOZ_INSTRUMENT_EXCEPTION', true),
+        'query'      => env('VAAHSIGNOZ_INSTRUMENT_QUERY', true),
+    ],
 ];
 ```
 
 ## Usage
 
-### Automatic Tracing
-Once installed, the package will automatically instrument your Laravel app and send traces to SigNoz.
+```php
+use VaahSignoz;
 
-#### Middleware
-For manual tracing, you can use the included middleware. Add to your `app/Http/Kernel.php`:
+// Instrument a specific service
+VaahSignoz::instrument('log');
+
+// Get config
+$config = VaahSignoz::getConfig();
+```
+
+### HTTP Request Tracing
+
+To capture every HTTP request as a trace, register the VaahSignoz middleware in your Laravel application.
+
+**Register globally in `app/Http/Kernel.php`:**
 
 ```php
 protected $middleware = [
     // ...
-    \WebReinvent\VaahSignoz\SigNozTraceMiddleware::class,
+    \Webreinvent\VaahSignoz\Middleware\RequestInstrumentation::class,
 ];
 ```
+## Advanced Usage
 
-#### How it Works?
-- On boot, the package initializes the OpenTelemetry tracer with your service name and version.
-- All incoming HTTP requests, database queries, and exceptions are traced and exported to SigNoz.
-- You can extend or customize tracing by editing OpenTelemetryService.php or the middleware.
+### Add Custom Instrumentation
 
-### Manual Span
+You can register your own event listeners or instrumentation hooks:
 
 ```php
-use WebReinvent\VaahSignoz\Services\OpenTelemetryService;
+use VaahSignoz;
 
-$tracer = OpenTelemetryService::getTracer();
-$span = $tracer->spanBuilder('custom-operation')->startSpan();
-$span->end();
+VaahSignoz::registerInstrumentation(function () {
+    // For example, listen to custom Laravel events
+    \Illuminate\Support\Facades\Event::listen('my.special.event', function ($event) {
+        $tracer = \Webreinvent\VaahSignoz\Tracer\TracerFactory::getTracer();
+        $span = $tracer->spanBuilder('my.custom.event')->startSpan();
+        $span->setAttribute('custom.event.data', json_encode($event));
+        $span->end();
+    });
+});
+
+## Error Handling
+
+Any unexpected error during instrumentation will throw 
+
+```php
+Webreinvent\VaahSignoz\Exceptions\VaahSignozException
 ```
+
+## Extending
+
+Add your own instrumentation by creating a class under
+```
+src/Instrumentation/
+```
+
+## User-defined Instrumentation Example
+
+```php
+VaahSignoz::registerInstrumentation(function () {
+    Event::listen(\Illuminate\Auth\Events\Login::class, function ($event) {
+        $tracer = \Webreinvent\VaahSignoz\Tracer\TracerFactory::getTracer();
+        $span = $tracer->spanBuilder('user.login')->startSpan();
+        $span->setAttribute('user.id', $event->user->id);
+        $span->end();
+    });
+});
+```
+
+## License
+
+The MIT License (MIT).
+
