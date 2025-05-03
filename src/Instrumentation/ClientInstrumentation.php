@@ -1,12 +1,12 @@
 <?php
 
-namespace Webreinvent\VaahSignoz\Instrumentation;
+namespace WebReinvent\VaahSignoz\Instrumentation;
 
 use Illuminate\Support\Facades\Event;
 use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
-use Webreinvent\VaahSignoz\Exceptions\VaahSignozException;
-use Webreinvent\VaahSignoz\Tracer\TracerFactory;
+use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
+use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use OpenTelemetry\API\Trace\Propagation\TraceContextPropagator;
 use OpenTelemetry\Context\Context;
 

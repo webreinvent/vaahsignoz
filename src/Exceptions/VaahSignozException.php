@@ -1,6 +1,6 @@
 <?php
 
-namespace Webreinvent\VaahSignoz\Exceptions;
+namespace WebReinvent\VaahSignoz\Exceptions;
 
 use Exception;
 

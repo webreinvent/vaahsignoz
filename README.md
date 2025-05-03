@@ -62,7 +62,7 @@ To capture every HTTP request as a trace, register the VaahSignoz middleware in 
 ```php
 protected $middleware = [
     // ...
-    \Webreinvent\VaahSignoz\Middleware\RequestInstrumentation::class,
+    \WebReinvent\VaahSignoz\src\Middleware\RequestInstrumentation::class,
 ];
 ```
 ## Advanced Usage
@@ -77,7 +77,7 @@ use VaahSignoz;
 VaahSignoz::registerInstrumentation(function () {
     // For example, listen to custom Laravel events
     \Illuminate\Support\Facades\Event::listen('my.special.event', function ($event) {
-        $tracer = \Webreinvent\VaahSignoz\Tracer\TracerFactory::getTracer();
+        $tracer = \WebReinvent\VaahSignoz\src\Tracer\TracerFactory::getTracer();
         $span = $tracer->spanBuilder('my.custom.event')->startSpan();
         $span->setAttribute('custom.event.data', json_encode($event));
         $span->end();
@@ -104,7 +104,7 @@ src/Instrumentation/
 ```php
 VaahSignoz::registerInstrumentation(function () {
     Event::listen(\Illuminate\Auth\Events\Login::class, function ($event) {
-        $tracer = \Webreinvent\VaahSignoz\Tracer\TracerFactory::getTracer();
+        $tracer = \WebReinvent\VaahSignoz\src\Tracer\TracerFactory::getTracer();
         $span = $tracer->spanBuilder('user.login')->startSpan();
         $span->setAttribute('user.id', $event->user->id);
         $span->end();

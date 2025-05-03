@@ -1,14 +1,14 @@
 <?php
 
-namespace Webreinvent\VaahSignoz\Instrumentation;
+namespace WebReinvent\VaahSignoz\Instrumentation;
 
 use Illuminate\Support\Facades\Event;
 use Illuminate\Cache\Events\CacheHit;
 use Illuminate\Cache\Events\CacheMissed;
 use Illuminate\Cache\Events\KeyWritten;
 use Illuminate\Cache\Events\KeyForgotten;
-use Webreinvent\VaahSignoz\Exceptions\VaahSignozException;
-use Webreinvent\VaahSignoz\Tracer\TracerFactory;
+use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
+use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 
 class CacheInstrumentation
 {

@@ -1,13 +1,13 @@
 <?php
 
-namespace Webreinvent\VaahSignoz;
+namespace WebReinvent\VaahSignoz;
 
-use Webreinvent\VaahSignoz\Instrumentation\CacheInstrumentation;
-use Webreinvent\VaahSignoz\Instrumentation\ClientInstrumentation;
-use Webreinvent\VaahSignoz\Instrumentation\ExceptionInstrumentation;
-use Webreinvent\VaahSignoz\Instrumentation\LogInstrumentation;
-use Webreinvent\VaahSignoz\Instrumentation\QueryInstrumentation;
-use Webreinvent\VaahSignoz\Exceptions\VaahSignozException;
+use WebReinvent\VaahSignoz\Instrumentation\CacheInstrumentation;
+use WebReinvent\VaahSignoz\Instrumentation\ClientInstrumentation;
+use WebReinvent\VaahSignoz\Instrumentation\ExceptionInstrumentation;
+use WebReinvent\VaahSignoz\Instrumentation\LogInstrumentation;
+use WebReinvent\VaahSignoz\Instrumentation\QueryInstrumentation;
+use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
 
 class VaahSignoz
 {
@@ -35,19 +35,19 @@ class VaahSignoz
         $types = $config['instrumentations'] ?? [];
 
         if ($types['cache'] ?? false) {
-            (new Instrumentation\CacheInstrumentation())->boot();
+            (new CacheInstrumentation())->boot();
         }
         if ($types['client'] ?? false) {
-            (new Instrumentation\ClientInstrumentation())->boot();
+            (new ClientInstrumentation())->boot();
         }
         if ($types['exception'] ?? false) {
-            (new Instrumentation\ExceptionInstrumentation())->boot();
+            (new ExceptionInstrumentation())->boot();
         }
         if ($types['log'] ?? false) {
-            (new Instrumentation\LogInstrumentation())->boot();
+            (new LogInstrumentation())->boot();
         }
         if ($types['query'] ?? false) {
-            (new Instrumentation\QueryInstrumentation())->boot();
+            (new QueryInstrumentation())->boot();
         }
 
         // Boot custom registered instrumentations

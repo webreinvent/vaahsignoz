@@ -1,6 +1,6 @@
 <?php
 
-namespace Webreinvent\VaahSignoz;
+namespace WebReinvent\VaahSignoz;
 
 use Illuminate\Support\ServiceProvider;
 

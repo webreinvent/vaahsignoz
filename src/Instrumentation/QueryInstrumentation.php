@@ -1,11 +1,11 @@
 <?php
 
-namespace Webreinvent\VaahSignoz\Instrumentation;
+namespace WebReinvent\VaahSignoz\Instrumentation;
 
 use Illuminate\Support\Facades\Event;
 use Illuminate\Database\Events\QueryExecuted;
-use Webreinvent\VaahSignoz\Exceptions\VaahSignozException;
-use Webreinvent\VaahSignoz\Tracer\TracerFactory;
+use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
+use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 
 class QueryInstrumentation
 {

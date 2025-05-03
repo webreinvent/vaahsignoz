@@ -1,8 +1,8 @@
 <?php
 
-namespace Webreinvent\VaahSignoz\Tracer;
+namespace WebReinvent\VaahSignoz\Tracer;
 
-use Webreinvent\VaahSignoz\Exceptions\VaahSignozException;
+use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
 
 class TracerFactory
 {

@@ -1,6 +1,6 @@
 <?php
 
-namespace Webreinvent\VaahSignoz\Facades;
+namespace WebReinvent\VaahSignoz\Facades;
 
 use Illuminate\Support\Facades\Facade;
 

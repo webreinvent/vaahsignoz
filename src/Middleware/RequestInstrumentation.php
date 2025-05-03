@@ -1,10 +1,10 @@
 <?php
 
-namespace Webreinvent\VaahSignoz\Middleware;
+namespace WebReinvent\VaahSignoz\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use Webreinvent\VaahSignoz\Tracer\TracerFactory;
+use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use OpenTelemetry\API\Trace\StatusCode;
 use Symfony\Component\HttpFoundation\Response;
 
