@@ -5,11 +5,13 @@ namespace WebReinvent\VaahSignoz\Tracer;
 use OpenTelemetry\Contrib\Otlp\SpanExporter;
 use OpenTelemetry\SDK\Common\Export\Http\PsrTransport;
 use GuzzleHttp\Client;
+use OpenTelemetry\SDK\Resource\ResourceInfo;
 use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
 use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
 
 use GuzzleHttp\Psr7\HttpFactory;
+use OpenTelemetry\SDK\Common\Attribute\Attributes;
 
 class TracerFactory
 {
@@ -24,6 +26,18 @@ class TracerFactory
         $config = config('vaahsignoz.otel');
         $endpoint = $config['endpoint'] ?? 'http://localhost:4318/v1/traces';
         $serviceName = $config['service_name'] ?? 'laravel-app';
+        $version = $config['version'] ?? null;
+        $environment = $config['environment'] ?? null;
+
+        $resource_attributes = [
+            'service.name' => $serviceName,
+            'service.version' => $version,
+            'deployment.environment' => $environment,
+        ];
+
+        //dd($resource_attributes);
+
+        $resource_app_info = ResourceInfo::create(Attributes::create($resource_attributes));
 
         $client = new Client();
         $httpFactory = new HttpFactory();
@@ -44,8 +58,12 @@ class TracerFactory
         // Construct the exporter with the transport
         $exporter = new SpanExporter($transport);
 
+
+
         // Optionally enrich resource attributes (service.name, etc)
-        $resource = ResourceInfoFactory::defaultResource()->merge(ResourceInfoFactory::defaultResource());
+        $resource = ResourceInfoFactory::defaultResource()
+            ->merge($resource_app_info);
+
 
         // Set up the tracer provider
         $tracerProvider = new TracerProvider(
@@ -54,7 +72,10 @@ class TracerFactory
             $resource                           // resource info
         );
 
-        self::$tracer = $tracerProvider->getTracer($serviceName);
+        self::$tracer = $tracerProvider->getTracer(
+            $serviceName,
+            $version
+        );
 
         return self::$tracer;
     }

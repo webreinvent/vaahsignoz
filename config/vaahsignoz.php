@@ -9,6 +9,8 @@ return [
     'otel' => [
         'endpoint' => env('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318/v1/traces'),
         'service_name' => env('OTEL_SERVICE_NAME', 'laravel-app'),
+        'version' => env('APP_VERSION') ?: null,
+        'environment' => env('APP_ENV') ?: 'local',
     ],
 
     // Which features to instrument
