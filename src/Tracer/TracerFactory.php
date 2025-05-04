@@ -19,11 +19,11 @@ class TracerFactory
 
     public static function getSetupConfig()
     {
-        $config = config('vaahsignoz.otel');
-        $setup['endpoint'] = $config['endpoint'] ?? 'http://localhost:4318/v1/traces';
-        $setup['serviceName'] = $config['service_name'] ?? 'laravel-app';
-        $setup['version'] = $config['version'] ?? null;
-        $setup['environment'] = $config['environment'] ?? null;
+        $configVaahSignoz = config('vaahsignoz.otel');
+        $setup['endpoint'] = $configVaahSignoz['endpoint'] ?? 'http://localhost:4318/v1/traces';
+        $setup['serviceName'] = $configVaahSignoz['service_name'] ?? 'laravel-app';
+        $setup['version'] = config('app.version') ?? $configVaahSignoz['version'] ?? '0.0.0';
+        $setup['environment'] = $configVaahSignoz['environment'] ?? 'local';
 
         return $setup;
     }
