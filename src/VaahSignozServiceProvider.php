@@ -25,5 +25,10 @@ class VaahSignozServiceProvider extends ServiceProvider
             $signoz = $this->app->make('vaahsignoz');
             $signoz->autoInstrument();
         }
+
+        if (config('vaahsignoz.enabled') && config('vaahsignoz.instrumentations.log')) {
+            (new \WebReinvent\VaahSignoz\Instrumentation\LogInstrumentation())->boot();
+        }
+
     }
 }
