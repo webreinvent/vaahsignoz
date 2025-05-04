@@ -21,7 +21,7 @@ class RequestInstrumentation
     {
         $tracer = TracerFactory::getTracer();
 
-        $span = $tracer->spanBuilder($request->method() . ' ' . $request->path())
+        $span = $tracer->spanBuilder($request->method() . ' /' . $request->path())
             ->setAttribute('http.method', $request->method())
             ->setAttribute('http.url', $request->fullUrl())
             ->setAttribute('http.scheme', $request->getScheme())

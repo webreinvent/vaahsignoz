@@ -35,7 +35,10 @@ return [
     // You can use these in TracerFactory with `putenv()` or just document them.
     'otel' => [
         'endpoint' => env('OTEL_EXPORTER_OTLP_ENDPOINT', 'http://localhost:4318/v1/traces'),
+        'endpoint_logs' => env('OTEL_EXPORTER_LOGS_ENDPOINT', 'http://localhost:4318/v1/logs'),
         'service_name' => env('OTEL_SERVICE_NAME', 'laravel-app'),
+        'version' => env('APP_VERSION') ?: null,
+        'environment' => env('APP_ENV') ?: 'local',
     ],
 
     // Which features to instrument
@@ -51,15 +54,17 @@ return [
 
 ## Usage
 
+### Register Service Provider
+**Register service provider `config/app.php`:**
+
 ```php
-use VaahSignoz;
-
-// Instrument a specific service
-VaahSignoz::instrument('log');
-
-// Get config
-$config = VaahSignoz::getConfig();
+ 'providers' => ServiceProvider::defaultProviders()->merge([
+    // ...
+    \WebReinvent\VaahSignoz\VaahSignozServiceProvider::class,
+    //...
+])->toArray(),
 ```
+
 
 ### HTTP Request Tracing
 
