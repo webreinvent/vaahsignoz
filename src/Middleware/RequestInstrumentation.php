@@ -19,14 +19,18 @@ class RequestInstrumentation
      */
     public function handle(Request $request, Closure $next)
     {
+        $setupConfig = TracerFactory::getSetupConfig();
         $tracer = TracerFactory::getTracer();
 
-        $span = $tracer->spanBuilder($request->method() . ' /' . $request->path())
+        $span = $tracer->spanBuilder($request->method() . ' ' . $request->path())
             ->setAttribute('http.method', $request->method())
             ->setAttribute('http.url', $request->fullUrl())
             ->setAttribute('http.scheme', $request->getScheme())
             ->setAttribute('http.host', $request->getHost())
             ->setAttribute('http.target', $request->getRequestUri())
+            ->setAttribute('service.name', $setupConfig['serviceName'])
+            ->setAttribute('service.version', $setupConfig['version'])
+            ->setAttribute('deployment.environment', $setupConfig['environment'])
             ->startSpan();
 
         try {
@@ -41,6 +45,10 @@ class RequestInstrumentation
             $span->setAttribute('exception.message', $e->getMessage());
             $span->setAttribute('exception.file', $e->getFile());
             $span->setAttribute('exception.line', $e->getLine());
+            $span->setAttribute('service.name', $setupConfig['serviceName']);
+            $span->setAttribute('service.version', $setupConfig['version']);
+            $span->setAttribute('deployment.environment', $setupConfig['environment']);
+
             if (class_exists(StatusCode::class)) {
                 $span->setStatus(StatusCode::STATUS_ERROR, $e->getMessage());
             }

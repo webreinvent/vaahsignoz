@@ -67,6 +67,10 @@ class LogInstrumentation
                             [
                                 'key' => 'deployment.environment',
                                 'value' => ['stringValue' => $this->vaahSignozConfig['otel']['environment']]
+                            ],
+                            [
+                                'key' => 'host.name',
+                                'value' => ['stringValue' => gethostname()]
                             ]
                         ]
                     ],
