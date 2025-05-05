@@ -121,11 +121,27 @@ class ExceptionInstrumentation
     public function handleException(Throwable $exception, string $level)
     {
         try {
+            // Get HTTP status code if this is an HTTP exception
+            $statusCode = 500;
+            $statusText = 'Internal Server Error';
+            
+            // Check for Laravel HTTP exceptions
+            if (method_exists($exception, 'getStatusCode')) {
+                $statusCode = $exception->getStatusCode();
+                $statusText = $this->getStatusText($statusCode);
+            } elseif (property_exists($exception, 'status') && is_numeric($exception->status)) {
+                $statusCode = $exception->status;
+                $statusText = $this->getStatusText($statusCode);
+            } elseif (isset($exception->statusCode) && is_numeric($exception->statusCode)) {
+                $statusCode = $exception->statusCode;
+                $statusText = $this->getStatusText($statusCode);
+            }
+            
             // Send the exception as a log with special exception attributes
-            $this->sendExceptionToSigNoz($exception, $level);
+            $this->sendExceptionToSigNoz($exception, $level, $statusCode, $statusText);
             
             // Also create a trace for the exception
-            $this->createExceptionTrace($exception, $level);
+            $this->createExceptionTrace($exception, $level, $statusCode, $statusText);
             
         } catch (\Throwable $e) {
             // Prevent infinite loops if there's an error in our exception handling
@@ -138,7 +154,7 @@ class ExceptionInstrumentation
     /**
      * Send the exception as a log with special exception attributes
      */
-    protected function sendExceptionToSigNoz(Throwable $exception, string $level)
+    protected function sendExceptionToSigNoz(Throwable $exception, string $level, int $statusCode = 500, string $statusText = 'Internal Server Error')
     {
         try {
             // Extract file and line information
@@ -197,7 +213,7 @@ class ExceptionInstrumentation
                                         'body' => [
                                             'stringValue' => $exception->getMessage()
                                         ],
-                                        'attributes' => $this->formatExceptionAttributes($exception, $fileInfo, $level)
+                                        'attributes' => $this->formatExceptionAttributes($exception, $fileInfo, $level, $statusCode, $statusText)
                                     ]
                                 ]
                             ]
@@ -285,7 +301,7 @@ class ExceptionInstrumentation
     /**
      * Create a trace for the exception
      */
-    protected function createExceptionTrace(Throwable $exception, string $level)
+    protected function createExceptionTrace(Throwable $exception, string $level, int $statusCode = 500, string $statusText = 'Internal Server Error')
     {
         // Get the tracer
         $tracer = TracerFactory::getTracer();
@@ -299,6 +315,8 @@ class ExceptionInstrumentation
             ->setAttribute('exception.file', $exception->getFile())
             ->setAttribute('exception.line', $exception->getLine())
             ->setAttribute('log.level', $level)
+            ->setAttribute('http.status_code', $statusCode)
+            ->setAttribute('http.status_text', $statusText)
             ->setAttribute('service.name', $this->setupConfig['serviceName'])
             ->setAttribute('service.version', $this->setupConfig['version'])
             ->setAttribute('deployment.environment', $this->setupConfig['environment'])
@@ -365,7 +383,7 @@ class ExceptionInstrumentation
     /**
      * Format exception attributes for SigNoz
      */
-    protected function formatExceptionAttributes(Throwable $exception, array $fileInfo, string $level)
+    protected function formatExceptionAttributes(Throwable $exception, array $fileInfo, string $level, int $statusCode = 500, string $statusText = 'Internal Server Error')
     {
         $attributes = [];
         
@@ -384,6 +402,17 @@ class ExceptionInstrumentation
         $attributes[] = [
             'key' => 'exception.stacktrace',
             'value' => ['stringValue' => $exception->getTraceAsString()]
+        ];
+        
+        // Add HTTP status information
+        $attributes[] = [
+            'key' => 'http.status_code',
+            'value' => ['intValue' => $statusCode]
+        ];
+        
+        $attributes[] = [
+            'key' => 'http.status_text',
+            'value' => ['stringValue' => $statusText]
         ];
         
         // Add file information attributes
@@ -485,6 +514,79 @@ class ExceptionInstrumentation
         ];
         
         return $severityMap[$level] ?? 9; // Default to INFO if level not found
+    }
+    
+    /**
+     * Get HTTP status text for a given status code
+     */
+    protected function getStatusText(int $code): string
+    {
+        $statusTexts = [
+            100 => 'Continue',
+            101 => 'Switching Protocols',
+            102 => 'Processing',
+            103 => 'Early Hints',
+            200 => 'OK',
+            201 => 'Created',
+            202 => 'Accepted',
+            203 => 'Non-Authoritative Information',
+            204 => 'No Content',
+            205 => 'Reset Content',
+            206 => 'Partial Content',
+            207 => 'Multi-Status',
+            208 => 'Already Reported',
+            226 => 'IM Used',
+            300 => 'Multiple Choices',
+            301 => 'Moved Permanently',
+            302 => 'Found',
+            303 => 'See Other',
+            304 => 'Not Modified',
+            305 => 'Use Proxy',
+            307 => 'Temporary Redirect',
+            308 => 'Permanent Redirect',
+            400 => 'Bad Request',
+            401 => 'Unauthorized',
+            402 => 'Payment Required',
+            403 => 'Forbidden',
+            404 => 'Not Found',
+            405 => 'Method Not Allowed',
+            406 => 'Not Acceptable',
+            407 => 'Proxy Authentication Required',
+            408 => 'Request Timeout',
+            409 => 'Conflict',
+            410 => 'Gone',
+            411 => 'Length Required',
+            412 => 'Precondition Failed',
+            413 => 'Payload Too Large',
+            414 => 'URI Too Long',
+            415 => 'Unsupported Media Type',
+            416 => 'Range Not Satisfiable',
+            417 => 'Expectation Failed',
+            418 => 'I\'m a teapot',
+            421 => 'Misdirected Request',
+            422 => 'Unprocessable Entity',
+            423 => 'Locked',
+            424 => 'Failed Dependency',
+            425 => 'Too Early',
+            426 => 'Upgrade Required',
+            428 => 'Precondition Required',
+            429 => 'Too Many Requests',
+            431 => 'Request Header Fields Too Large',
+            451 => 'Unavailable For Legal Reasons',
+            500 => 'Internal Server Error',
+            501 => 'Not Implemented',
+            502 => 'Bad Gateway',
+            503 => 'Service Unavailable',
+            504 => 'Gateway Timeout',
+            505 => 'HTTP Version Not Supported',
+            506 => 'Variant Also Negotiates',
+            507 => 'Insufficient Storage',
+            508 => 'Loop Detected',
+            510 => 'Not Extended',
+            511 => 'Network Authentication Required',
+        ];
+        
+        return $statusTexts[$code] ?? 'Unknown Status';
     }
     
     /**
