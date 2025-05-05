@@ -8,6 +8,7 @@ use Illuminate\Log\Events\MessageLogged;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 use GuzzleHttp\Client;
 use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
+use Illuminate\Http\Request;
 
 class LogInstrumentation
 {
@@ -96,6 +97,46 @@ class LogInstrumentation
             ]
         ];
 
+        // Add request information if available
+        if (request()) {
+            $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                'key' => 'http.url',
+                'value' => ['stringValue' => request()->fullUrl()]
+            ];
+            
+            $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                'key' => 'http.method',
+                'value' => ['stringValue' => request()->method()]
+            ];
+            
+            $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                'key' => 'http.user_agent',
+                'value' => ['stringValue' => request()->userAgent() ?? 'unknown']
+            ];
+            
+            $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                'key' => 'http.client_ip',
+                'value' => ['stringValue' => request()->ip()]
+            ];
+            
+            // Add route information if available
+            if (request()->route()) {
+                $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                    'key' => 'http.route',
+                    'value' => ['stringValue' => request()->route()->getName() ?? request()->route()->uri()]
+                ];
+                
+                // Add controller and action if available
+                $action = request()->route()->getAction();
+                if (isset($action['controller'])) {
+                    $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                        'key' => 'http.controller',
+                        'value' => ['stringValue' => $action['controller']]
+                    ];
+                }
+            }
+        }
+
         try {
             $response = $this->httpClient->post($this->endpoint, [
                 'json' => $logData,
@@ -162,28 +203,28 @@ class LogInstrumentation
         // Add file information attributes
         if (!empty($fileInfo['file'])) {
             $attributes[] = [
-                'key' => 'code.filepath',
+                'key' => 'log.file',
                 'value' => ['stringValue' => $fileInfo['file']]
             ];
         }
 
         if (!empty($fileInfo['line'])) {
             $attributes[] = [
-                'key' => 'code.lineno',
+                'key' => 'log.line',
                 'value' => ['intValue' => $fileInfo['line']]
             ];
         }
 
         if (!empty($fileInfo['function'])) {
             $attributes[] = [
-                'key' => 'code.function',
+                'key' => 'log.function',
                 'value' => ['stringValue' => $fileInfo['function']]
             ];
         }
 
         if (!empty($fileInfo['class'])) {
             $attributes[] = [
-                'key' => 'code.namespace',
+                'key' => 'log.class',
                 'value' => ['stringValue' => $fileInfo['class']]
             ];
         }
@@ -205,6 +246,21 @@ class LogInstrumentation
         $attributes[] = [
             'key' => 'log.logger',
             'value' => ['stringValue' => 'laravel']
+        ];
+
+        $attributes[] = [
+            'key' => 'log.level',
+            'value' => ['stringValue' => $event->level]
+        ];
+
+        $attributes[] = [
+            'key' => 'log.severity_number',
+            'value' => ['intValue' => $this->getSeverityNumber($event->level)]
+        ];
+
+        $attributes[] = [
+            'key' => 'log.severity_text',
+            'value' => ['stringValue' => strtoupper($event->level)]
         ];
 
         return $attributes;

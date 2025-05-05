@@ -30,5 +30,8 @@ class VaahSignozServiceProvider extends ServiceProvider
             (new \WebReinvent\VaahSignoz\Instrumentation\LogInstrumentation())->boot();
         }
 
+        if (config('vaahsignoz.enabled') && config('vaahsignoz.instrumentations.exception', true)) {
+            (new \WebReinvent\VaahSignoz\Instrumentation\ExceptionInstrumentation())->boot();
+        }
     }
 }
