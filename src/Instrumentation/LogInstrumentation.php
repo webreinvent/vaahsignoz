@@ -129,10 +129,29 @@ class LogInstrumentation
                 // Add controller and action if available
                 $action = request()->route()->getAction();
                 if (isset($action['controller'])) {
-                    $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
-                        'key' => 'http.controller',
-                        'value' => ['stringValue' => $action['controller']]
-                    ];
+                    $controller = $action['controller'];
+                    // Format controller name to include backslashes
+                    if (is_string($controller) && strpos($controller, '@') !== false) {
+                        $parts = explode('@', $controller);
+                        $className = $parts[0];
+                        // Ensure backslashes are preserved in the class name
+                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                            'key' => 'http.controller',
+                            'value' => ['stringValue' => $className]
+                        ];
+                        
+                        if (isset($parts[1])) {
+                            $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                                'key' => 'http.action',
+                                'value' => ['stringValue' => $parts[1]]
+                            ];
+                        }
+                    } else {
+                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                            'key' => 'http.controller',
+                            'value' => ['stringValue' => $controller]
+                        ];
+                    }
                 }
             }
         }
@@ -223,9 +242,11 @@ class LogInstrumentation
         }
 
         if (!empty($fileInfo['class'])) {
+            // Ensure class name has proper formatting with backslashes
+            $className = str_replace('\\\\', '\\', $fileInfo['class']);
             $attributes[] = [
                 'key' => 'log.class',
-                'value' => ['stringValue' => $fileInfo['class']]
+                'value' => ['stringValue' => $className]
             ];
         }
 
