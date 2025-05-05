@@ -3,7 +3,9 @@
 namespace WebReinvent\VaahSignoz\Instrumentation;
 
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Log\Events\MessageLogged;
+use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 use GuzzleHttp\Client;
 use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
 
@@ -45,8 +47,6 @@ class LogInstrumentation
      */
     protected function sendLogToSigNoz(MessageLogged $event)
     {
-
-
         // Extract file and line information from exception or backtrace
         $fileInfo = $this->extractFileInfo($event);
 
@@ -70,7 +70,7 @@ class LogInstrumentation
                             ],
                             [
                                 'key' => 'host.name',
-                                'value' => ['stringValue' => gethostname()]
+                                'value' => ['stringValue' => InstrumentationHelper::getHostIdentifier()]
                             ]
                         ]
                     ],
@@ -208,6 +208,16 @@ class LogInstrumentation
         ];
 
         return $attributes;
+    }
+
+    /**
+     * Get the host identifier - prefer domain name over hostname
+     *
+     * @return string
+     */
+    protected function getHostIdentifier()
+    {
+        return InstrumentationHelper::getHostIdentifier();
     }
 
     /**

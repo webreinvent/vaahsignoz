@@ -4,8 +4,9 @@ namespace WebReinvent\VaahSignoz\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use OpenTelemetry\API\Trace\StatusCode;
+use WebReinvent\VaahSignoz\Tracer\TracerFactory;
+use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 use Symfony\Component\HttpFoundation\Response;
 
 class RequestInstrumentation
@@ -31,6 +32,7 @@ class RequestInstrumentation
             ->setAttribute('service.name', $setupConfig['serviceName'])
             ->setAttribute('service.version', $setupConfig['version'])
             ->setAttribute('deployment.environment', $setupConfig['environment'])
+            ->setAttribute('host.name', InstrumentationHelper::getHostIdentifier($request))
             ->startSpan();
 
         try {
@@ -56,5 +58,16 @@ class RequestInstrumentation
         } finally {
             $span->end();
         }
+    }
+
+    /**
+     * Get the host identifier - prefer domain name over hostname
+     *
+     * @param \Illuminate\Http\Request $request
+     * @return string
+     */
+    protected function getHostIdentifier($request)
+    {
+        return InstrumentationHelper::getHostIdentifier($request);
     }
 }
