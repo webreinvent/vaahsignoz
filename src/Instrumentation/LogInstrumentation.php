@@ -269,19 +269,22 @@ class LogInstrumentation
             'value' => ['stringValue' => 'laravel']
         ];
 
+        // Get the log level from the context if available
+        $logLevel = $context['level'] ?? 'info';
+        
         $attributes[] = [
             'key' => 'log.level',
-            'value' => ['stringValue' => $event->level]
+            'value' => ['stringValue' => $logLevel]
         ];
 
         $attributes[] = [
             'key' => 'log.severity_number',
-            'value' => ['intValue' => $this->getSeverityNumber($event->level)]
+            'value' => ['intValue' => $this->getSeverityNumber($logLevel)]
         ];
 
         $attributes[] = [
             'key' => 'log.severity_text',
-            'value' => ['stringValue' => strtoupper($event->level)]
+            'value' => ['stringValue' => strtoupper((string)$logLevel)]
         ];
 
         return $attributes;
@@ -303,6 +306,11 @@ class LogInstrumentation
      */
     protected function getSeverityNumber($level)
     {
+        // Default to INFO if level is null or empty
+        if (empty($level)) {
+            return 9; // INFO
+        }
+        
         $map = [
             'debug' => 5,     // DEBUG
             'info' => 9,      // INFO
@@ -314,6 +322,6 @@ class LogInstrumentation
             'emergency' => 33 // FATAL
         ];
 
-        return $map[strtolower($level)] ?? 9; // Default to INFO if unknown
+        return $map[strtolower((string)$level)] ?? 9; // Default to INFO if unknown
     }
 }
