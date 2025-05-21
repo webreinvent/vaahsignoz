@@ -10,9 +10,11 @@ class VaahSignozServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/vaahsignoz.php', 'vaahsignoz');
 
+        if (config('vaahsignoz.enabled')) {
         $this->app->singleton('vaahsignoz', function ($app) {
             return new VaahSignoz();
         });
+        }
     }
 
     public function boot()
