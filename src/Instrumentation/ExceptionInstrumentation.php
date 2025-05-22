@@ -246,6 +246,28 @@ class ExceptionInstrumentation
 
             $currentSpan->setAttribute('exception.stack_trace', implode("\n", $formattedTrace));
 
+            // Add authenticated user information if available
+            if (auth()->check()) {
+                $user = auth()->user();
+
+                $currentSpan->setAttribute('user.id', (string)$user->id);
+
+                if (isset($user->email)) {
+                    $currentSpan->setAttribute('user.email', $user->email);
+                }
+
+                if (isset($user->name)) {
+                    $currentSpan->setAttribute('user.name', $user->name);
+                }
+
+                // Add tenant information if available (for multi-tenant applications)
+                if (isset(request()->tenant)) {
+                    $currentSpan->setAttribute('user.tenant_id', (string)request()->tenant->id);
+                }
+            } else {
+                $currentSpan->setAttribute('user.authenticated', false);
+            }
+
             // Add request information if available
             if (request()) {
                 $currentSpan->setAttribute('http.method', request()->method());
@@ -298,32 +320,6 @@ class ExceptionInstrumentation
                         strpos($userAgent, 'iPhone') !== false ||
                         strpos($userAgent, 'iPad') !== false
                     ) ? 'true' : 'false');
-                }
-
-                // Add location information from headers if available
-                $currentSpan->setAttribute('client.geo.country', request()->header('CF-IPCountry') ?? 'unknown');
-                $currentSpan->setAttribute('client.geo.city', request()->header('CF-IPCity') ?? 'unknown');
-                $currentSpan->setAttribute('client.geo.continent', request()->header('CF-IPContinent') ?? 'unknown');
-
-                // Add user information if authenticated
-                if (auth()->check()) {
-                    $user = auth()->user();
-                    $currentSpan->setAttribute('user.id', $user->id ?? 'unknown');
-                    $currentSpan->setAttribute('user.email', $user->email ?? 'unknown');
-                    $currentSpan->setAttribute('user.name', $user->name ?? 'unknown');
-
-                    // Add roles if available
-                    if (method_exists($user, 'getRoleNames')) {
-                        $currentSpan->setAttribute('user.roles', implode(',', $user->getRoleNames()->toArray()));
-                    }
-
-                    // Add tenant information if available
-                    if (request()->attributes->has('tenant')) {
-                        $tenant = request()->attributes->get('tenant');
-                        $currentSpan->setAttribute('tenant.id', $tenant->id ?? 'unknown');
-                        $currentSpan->setAttribute('tenant.name', $tenant->name ?? 'unknown');
-                        $currentSpan->setAttribute('tenant.slug', $tenant->slug ?? 'unknown');
-                    }
                 }
 
                 // Add route information if available
@@ -637,48 +633,6 @@ class ExceptionInstrumentation
                     'value' => ['stringValue' => request()->header('CF-IPContinent') ?? 'unknown']
                 ];
 
-                // Add user information if authenticated
-                if (auth()->check()) {
-                    $user = auth()->user();
-                    $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
-                        'key' => 'user.id',
-                        'value' => ['stringValue' => $user->id ?? 'unknown']
-                    ];
-                    $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
-                        'key' => 'user.email',
-                        'value' => ['stringValue' => $user->email ?? 'unknown']
-                    ];
-                    $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
-                        'key' => 'user.name',
-                        'value' => ['stringValue' => $user->name ?? 'unknown']
-                    ];
-
-                    // Add roles if available
-                    if (method_exists($user, 'getRoleNames')) {
-                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
-                            'key' => 'user.roles',
-                            'value' => ['stringValue' => implode(',', $user->getRoleNames()->toArray())]
-                        ];
-                    }
-
-                    // Add tenant information if available
-                    if (request()->attributes->has('tenant')) {
-                        $tenant = request()->attributes->get('tenant');
-                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
-                            'key' => 'tenant.id',
-                            'value' => ['stringValue' => $tenant->id ?? 'unknown']
-                        ];
-                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
-                            'key' => 'tenant.name',
-                            'value' => ['stringValue' => $tenant->name ?? 'unknown']
-                        ];
-                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
-                            'key' => 'tenant.slug',
-                            'value' => ['stringValue' => $tenant->slug ?? 'unknown']
-                        ];
-                    }
-                }
-
                 // Add route information if available
                 if (request()->route()) {
                     $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
@@ -713,6 +667,43 @@ class ExceptionInstrumentation
                         }
                     }
                 }
+
+                // Add authenticated user information if available
+                if (auth()->check()) {
+                    $user = auth()->user();
+
+                    $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                        'key' => 'user.id',
+                        'value' => ['stringValue' => (string)$user->id]
+                    ];
+
+                    if (isset($user->email)) {
+                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                            'key' => 'user.email',
+                            'value' => ['stringValue' => $user->email]
+                        ];
+                    }
+
+                    if (isset($user->name)) {
+                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                            'key' => 'user.name',
+                            'value' => ['stringValue' => $user->name]
+                        ];
+                    }
+
+                    // Add tenant information if available (for multi-tenant applications)
+                    if (isset(request()->tenant)) {
+                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                            'key' => 'user.tenant_id',
+                            'value' => ['stringValue' => (string)request()->tenant->id]
+                        ];
+                    }
+                } else {
+                    $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                        'key' => 'user.authenticated',
+                        'value' => ['boolValue' => false]
+                    ];
+                }
             }
 
             // Send to SigNoz logs endpoint
@@ -735,36 +726,35 @@ class ExceptionInstrumentation
     /**
      * Format exception attributes for SigNoz
      */
-    protected function formatExceptionAttributes(Throwable $exception, array $fileInfo, string $level, int $statusCode = 500, string $statusText = 'Internal Server Error', string $exceptionId = null)
+    protected function formatExceptionAttributes(Throwable $exception, array $fileInfo, string $level, int $statusCode = 500, string $statusText = 'Internal Server Error', string $exceptionId = null): array
     {
         $attributes = [];
 
-        // Add exception information
-        $exceptionClass = get_class($exception);
+        // Environment and service information (most important)
+        $attributes[] = [
+            'key' => 'deployment.environment',
+            'value' => ['stringValue' => $this->setupConfig['environment']]
+        ];
+
+        $attributes[] = [
+            'key' => 'service.name',
+            'value' => ['stringValue' => $this->setupConfig['serviceName']]
+        ];
+
+        $attributes[] = [
+            'key' => 'service.version',
+            'value' => ['stringValue' => $this->setupConfig['version']]
+        ];
+
+        // Critical exception information
         $attributes[] = [
             'key' => 'exception.type',
-            'value' => ['stringValue' => $exceptionClass]
+            'value' => ['stringValue' => get_class($exception)]
         ];
 
         $attributes[] = [
             'key' => 'exception.message',
             'value' => ['stringValue' => $exception->getMessage()]
-        ];
-
-        $attributes[] = [
-            'key' => 'exception.stacktrace',
-            'value' => ['stringValue' => $exception->getTraceAsString()]
-        ];
-
-        // Add HTTP status information
-        $attributes[] = [
-            'key' => 'http.status_code',
-            'value' => ['intValue' => $statusCode]
-        ];
-
-        $attributes[] = [
-            'key' => 'http.status_text',
-            'value' => ['stringValue' => $statusText]
         ];
 
         // Add file information attributes
@@ -779,22 +769,6 @@ class ExceptionInstrumentation
             $attributes[] = [
                 'key' => 'exception.line',
                 'value' => ['intValue' => $fileInfo['line']]
-            ];
-        }
-
-        if (!empty($fileInfo['function'])) {
-            $attributes[] = [
-                'key' => 'exception.function',
-                'value' => ['stringValue' => $fileInfo['function']]
-            ];
-        }
-
-        if (!empty($fileInfo['class'])) {
-            // Make sure to preserve the backslashes in the class name
-            $className = str_replace('\\\\', '\\', $fileInfo['class']);
-            $attributes[] = [
-                'key' => 'exception.class',
-                'value' => ['stringValue' => $className]
             ];
         }
 
@@ -823,6 +797,27 @@ class ExceptionInstrumentation
             ];
         }
 
+        $attributes[] = [
+            'key' => 'exception.stacktrace',
+            'value' => ['stringValue' => $exception->getTraceAsString()]
+        ];
+
+        if (!empty($fileInfo['function'])) {
+            $attributes[] = [
+                'key' => 'exception.function',
+                'value' => ['stringValue' => $fileInfo['function']]
+            ];
+        }
+
+        if (!empty($fileInfo['class'])) {
+            // Make sure to preserve the backslashes in the class name
+            $className = str_replace('\\\\', '\\', $fileInfo['class']);
+            $attributes[] = [
+                'key' => 'exception.class',
+                'value' => ['stringValue' => $className]
+            ];
+        }
+
         // Add log level information
         $attributes[] = [
             'key' => 'log.level',
@@ -838,6 +833,72 @@ class ExceptionInstrumentation
             'key' => 'log.severity_text',
             'value' => ['stringValue' => strtoupper($level)]
         ];
+
+        // Add HTTP status information
+        $attributes[] = [
+            'key' => 'http.status_code',
+            'value' => ['intValue' => $statusCode]
+        ];
+
+        $attributes[] = [
+            'key' => 'http.status_text',
+            'value' => ['stringValue' => $statusText]
+        ];
+
+        // Add request information if available
+        if (request()) {
+            $attributes[] = [
+                'key' => 'http.url',
+                'value' => ['stringValue' => request()->fullUrl()]
+            ];
+
+            $attributes[] = [
+                'key' => 'http.method',
+                'value' => ['stringValue' => request()->method()]
+            ];
+
+            $attributes[] = [
+                'key' => 'http.target',
+                'value' => ['stringValue' => request()->path()]
+            ];
+        }
+
+        // Add authenticated user information if available
+        if (auth()->check()) {
+            $user = auth()->user();
+
+            $attributes[] = [
+                'key' => 'user.id',
+                'value' => ['stringValue' => (string)$user->id]
+            ];
+
+            if (isset($user->email)) {
+                $attributes[] = [
+                    'key' => 'user.email',
+                    'value' => ['stringValue' => $user->email]
+                ];
+            }
+
+            if (isset($user->name)) {
+                $attributes[] = [
+                    'key' => 'user.name',
+                    'value' => ['stringValue' => $user->name]
+                ];
+            }
+
+            // Add tenant information if available (for multi-tenant applications)
+            if (isset(request()->tenant)) {
+                $attributes[] = [
+                    'key' => 'user.tenant_id',
+                    'value' => ['stringValue' => (string)request()->tenant->id]
+                ];
+            }
+        } else {
+            $attributes[] = [
+                'key' => 'user.authenticated',
+                'value' => ['boolValue' => false]
+            ];
+        }
 
         // Mark this as an exception record
         $attributes[] = [
