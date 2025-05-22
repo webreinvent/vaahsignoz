@@ -253,6 +253,79 @@ class ExceptionInstrumentation
                 $currentSpan->setAttribute('http.user_agent', request()->userAgent() ?? 'unknown');
                 $currentSpan->setAttribute('http.client_ip', request()->ip());
 
+                // Add IP address information
+                $currentSpan->setAttribute('client.ip', request()->ip());
+                $currentSpan->setAttribute('client.real_ip', request()->header('X-Forwarded-For') ?? request()->ip());
+
+                // Add browser and agent details
+                if (request()->userAgent()) {
+                    $userAgent = request()->userAgent();
+                    $currentSpan->setAttribute('client.user_agent', $userAgent);
+
+                    // Try to parse browser information
+                    if (function_exists('get_browser')) {
+                        $browserInfo = @get_browser($userAgent, true);
+                        if ($browserInfo) {
+                            $currentSpan->setAttribute('client.browser', $browserInfo['browser'] ?? 'unknown');
+                            $currentSpan->setAttribute('client.browser.version', $browserInfo['version'] ?? 'unknown');
+                            $currentSpan->setAttribute('client.platform', $browserInfo['platform'] ?? 'unknown');
+                            $currentSpan->setAttribute('client.device_type', $browserInfo['device_type'] ?? 'unknown');
+                        }
+                    } else {
+                        // Basic browser detection if get_browser() is not available
+                        $browserInfo = [];
+                        if (strpos($userAgent, 'Chrome') !== false) {
+                            $browserInfo['browser'] = 'Chrome';
+                        } elseif (strpos($userAgent, 'Firefox') !== false) {
+                            $browserInfo['browser'] = 'Firefox';
+                        } elseif (strpos($userAgent, 'Safari') !== false) {
+                            $browserInfo['browser'] = 'Safari';
+                        } elseif (strpos($userAgent, 'Edge') !== false) {
+                            $browserInfo['browser'] = 'Edge';
+                        } elseif (strpos($userAgent, 'MSIE') !== false || strpos($userAgent, 'Trident/') !== false) {
+                            $browserInfo['browser'] = 'Internet Explorer';
+                        } else {
+                            $browserInfo['browser'] = 'Other';
+                        }
+
+                        $currentSpan->setAttribute('client.browser', $browserInfo['browser']);
+                    }
+
+                    // Mobile detection
+                    $currentSpan->setAttribute('client.is_mobile', (
+                        strpos($userAgent, 'Mobile') !== false ||
+                        strpos($userAgent, 'Android') !== false ||
+                        strpos($userAgent, 'iPhone') !== false ||
+                        strpos($userAgent, 'iPad') !== false
+                    ) ? 'true' : 'false');
+                }
+
+                // Add location information from headers if available
+                $currentSpan->setAttribute('client.geo.country', request()->header('CF-IPCountry') ?? 'unknown');
+                $currentSpan->setAttribute('client.geo.city', request()->header('CF-IPCity') ?? 'unknown');
+                $currentSpan->setAttribute('client.geo.continent', request()->header('CF-IPContinent') ?? 'unknown');
+
+                // Add user information if authenticated
+                if (auth()->check()) {
+                    $user = auth()->user();
+                    $currentSpan->setAttribute('user.id', $user->id ?? 'unknown');
+                    $currentSpan->setAttribute('user.email', $user->email ?? 'unknown');
+                    $currentSpan->setAttribute('user.name', $user->name ?? 'unknown');
+
+                    // Add roles if available
+                    if (method_exists($user, 'getRoleNames')) {
+                        $currentSpan->setAttribute('user.roles', implode(',', $user->getRoleNames()->toArray()));
+                    }
+
+                    // Add tenant information if available
+                    if (request()->attributes->has('tenant')) {
+                        $tenant = request()->attributes->get('tenant');
+                        $currentSpan->setAttribute('tenant.id', $tenant->id ?? 'unknown');
+                        $currentSpan->setAttribute('tenant.name', $tenant->name ?? 'unknown');
+                        $currentSpan->setAttribute('tenant.slug', $tenant->slug ?? 'unknown');
+                    }
+                }
+
                 // Add route information if available
                 if (request()->route()) {
                     $currentSpan->setAttribute('http.route', request()->route()->getName() ?? request()->route()->uri());
@@ -476,6 +549,136 @@ class ExceptionInstrumentation
                     'value' => ['stringValue' => request()->ip()]
                 ];
 
+                // Add IP address information
+                $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                    'key' => 'client.ip',
+                    'value' => ['stringValue' => request()->ip()]
+                ];
+                $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                    'key' => 'client.real_ip',
+                    'value' => ['stringValue' => request()->header('X-Forwarded-For') ?? request()->ip()]
+                ];
+
+                // Add browser and agent details
+                if (request()->userAgent()) {
+                    $userAgent = request()->userAgent();
+                    $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                        'key' => 'client.user_agent',
+                        'value' => ['stringValue' => $userAgent]
+                    ];
+
+                    // Try to parse browser information
+                    if (function_exists('get_browser')) {
+                        $browserInfo = @get_browser($userAgent, true);
+                        if ($browserInfo) {
+                            $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                                'key' => 'client.browser',
+                                'value' => ['stringValue' => $browserInfo['browser'] ?? 'unknown']
+                            ];
+                            $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                                'key' => 'client.browser.version',
+                                'value' => ['stringValue' => $browserInfo['version'] ?? 'unknown']
+                            ];
+                            $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                                'key' => 'client.platform',
+                                'value' => ['stringValue' => $browserInfo['platform'] ?? 'unknown']
+                            ];
+                            $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                                'key' => 'client.device_type',
+                                'value' => ['stringValue' => $browserInfo['device_type'] ?? 'unknown']
+                            ];
+                        }
+                    } else {
+                        // Basic browser detection if get_browser() is not available
+                        $browserInfo = [];
+                        if (strpos($userAgent, 'Chrome') !== false) {
+                            $browserInfo['browser'] = 'Chrome';
+                        } elseif (strpos($userAgent, 'Firefox') !== false) {
+                            $browserInfo['browser'] = 'Firefox';
+                        } elseif (strpos($userAgent, 'Safari') !== false) {
+                            $browserInfo['browser'] = 'Safari';
+                        } elseif (strpos($userAgent, 'Edge') !== false) {
+                            $browserInfo['browser'] = 'Edge';
+                        } elseif (strpos($userAgent, 'MSIE') !== false || strpos($userAgent, 'Trident/') !== false) {
+                            $browserInfo['browser'] = 'Internet Explorer';
+                        } else {
+                            $browserInfo['browser'] = 'Other';
+                        }
+
+                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                            'key' => 'client.browser',
+                            'value' => ['stringValue' => $browserInfo['browser']]
+                        ];
+                    }
+
+                    // Mobile detection
+                    $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                        'key' => 'client.is_mobile',
+                        'value' => ['stringValue' => (
+                            strpos($userAgent, 'Mobile') !== false ||
+                            strpos($userAgent, 'Android') !== false ||
+                            strpos($userAgent, 'iPhone') !== false ||
+                            strpos($userAgent, 'iPad') !== false
+                        ) ? 'true' : 'false']
+                    ];
+                }
+
+                // Add location information from headers if available
+                $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                    'key' => 'client.geo.country',
+                    'value' => ['stringValue' => request()->header('CF-IPCountry') ?? 'unknown']
+                ];
+                $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                    'key' => 'client.geo.city',
+                    'value' => ['stringValue' => request()->header('CF-IPCity') ?? 'unknown']
+                ];
+                $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                    'key' => 'client.geo.continent',
+                    'value' => ['stringValue' => request()->header('CF-IPContinent') ?? 'unknown']
+                ];
+
+                // Add user information if authenticated
+                if (auth()->check()) {
+                    $user = auth()->user();
+                    $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                        'key' => 'user.id',
+                        'value' => ['stringValue' => $user->id ?? 'unknown']
+                    ];
+                    $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                        'key' => 'user.email',
+                        'value' => ['stringValue' => $user->email ?? 'unknown']
+                    ];
+                    $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                        'key' => 'user.name',
+                        'value' => ['stringValue' => $user->name ?? 'unknown']
+                    ];
+
+                    // Add roles if available
+                    if (method_exists($user, 'getRoleNames')) {
+                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                            'key' => 'user.roles',
+                            'value' => ['stringValue' => implode(',', $user->getRoleNames()->toArray())]
+                        ];
+                    }
+
+                    // Add tenant information if available
+                    if (request()->attributes->has('tenant')) {
+                        $tenant = request()->attributes->get('tenant');
+                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                            'key' => 'tenant.id',
+                            'value' => ['stringValue' => $tenant->id ?? 'unknown']
+                        ];
+                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                            'key' => 'tenant.name',
+                            'value' => ['stringValue' => $tenant->name ?? 'unknown']
+                        ];
+                        $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
+                            'key' => 'tenant.slug',
+                            'value' => ['stringValue' => $tenant->slug ?? 'unknown']
+                        ];
+                    }
+                }
+
                 // Add route information if available
                 if (request()->route()) {
                     $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
@@ -491,7 +694,6 @@ class ExceptionInstrumentation
                         if (is_string($controller) && strpos($controller, '@') !== false) {
                             $parts = explode('@', $controller);
                             $className = $parts[0];
-                            // Ensure backslashes are preserved in the class name
                             $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
                                 'key' => 'http.controller',
                                 'value' => ['stringValue' => $className]

@@ -199,14 +199,93 @@ class TracerFactory
             $standardAttributes['http.url'] = request()->fullUrl();
             $standardAttributes['http.target'] = request()->path();
             $standardAttributes['http.user_agent'] = request()->userAgent();
-            $standardAttributes['http.client_ip'] = request()->ip();
             
-            // Add route information if available
-            if (request()->route()) {
-                $routeName = request()->route()->getName();
-                if ($routeName) {
-                    $standardAttributes['http.route'] = $routeName;
+            // Add IP address information
+            $standardAttributes['client.ip'] = request()->ip();
+            $standardAttributes['client.real_ip'] = request()->header('X-Forwarded-For') ?? request()->ip();
+            
+            // Add browser and agent details
+            if (request()->userAgent()) {
+                $userAgent = request()->userAgent();
+                $standardAttributes['client.user_agent'] = $userAgent;
+                
+                // Try to parse browser information
+                if (function_exists('get_browser')) {
+                    $browserInfo = @get_browser($userAgent, true);
+                    if ($browserInfo) {
+                        $standardAttributes['client.browser'] = $browserInfo['browser'] ?? 'unknown';
+                        $standardAttributes['client.browser.version'] = $browserInfo['version'] ?? 'unknown';
+                        $standardAttributes['client.platform'] = $browserInfo['platform'] ?? 'unknown';
+                        $standardAttributes['client.device_type'] = $browserInfo['device_type'] ?? 'unknown';
+                    }
+                } else {
+                    // Basic browser detection if get_browser() is not available
+                    $browserInfo = [];
+                    if (strpos($userAgent, 'Chrome') !== false) {
+                        $browserInfo['browser'] = 'Chrome';
+                    } elseif (strpos($userAgent, 'Firefox') !== false) {
+                        $browserInfo['browser'] = 'Firefox';
+                    } elseif (strpos($userAgent, 'Safari') !== false) {
+                        $browserInfo['browser'] = 'Safari';
+                    } elseif (strpos($userAgent, 'Edge') !== false) {
+                        $browserInfo['browser'] = 'Edge';
+                    } elseif (strpos($userAgent, 'MSIE') !== false || strpos($userAgent, 'Trident/') !== false) {
+                        $browserInfo['browser'] = 'Internet Explorer';
+                    } else {
+                        $browserInfo['browser'] = 'Other';
+                    }
+                    
+                    $standardAttributes['client.browser'] = $browserInfo['browser'];
                 }
+                
+                // Mobile detection
+                $standardAttributes['client.is_mobile'] = (
+                    strpos($userAgent, 'Mobile') !== false || 
+                    strpos($userAgent, 'Android') !== false || 
+                    strpos($userAgent, 'iPhone') !== false || 
+                    strpos($userAgent, 'iPad') !== false
+                ) ? 'true' : 'false';
+            }
+            
+            // Add location information from headers if available
+            $standardAttributes['client.geo.country'] = request()->header('CF-IPCountry') ?? 'unknown';
+            $standardAttributes['client.geo.city'] = request()->header('CF-IPCity') ?? 'unknown';
+            $standardAttributes['client.geo.continent'] = request()->header('CF-IPContinent') ?? 'unknown';
+            
+            // Add user information if authenticated
+            if (auth()->check()) {
+                $user = auth()->user();
+                $standardAttributes['user.id'] = $user->id ?? 'unknown';
+                $standardAttributes['user.email'] = $user->email ?? 'unknown';
+                $standardAttributes['user.name'] = $user->name ?? 'unknown';
+                
+                // Add roles if available
+                if (method_exists($user, 'getRoleNames')) {
+                    $standardAttributes['user.roles'] = implode(',', $user->getRoleNames()->toArray());
+                }
+                
+                // Add tenant information if available
+                if (request()->attributes->has('tenant')) {
+                    $tenant = request()->attributes->get('tenant');
+                    $standardAttributes['tenant.id'] = $tenant->id ?? 'unknown';
+                    $standardAttributes['tenant.name'] = $tenant->name ?? 'unknown';
+                    $standardAttributes['tenant.slug'] = $tenant->slug ?? 'unknown';
+                }
+            }
+            
+            // Add request headers (excluding sensitive ones)
+            $headers = collect(request()->headers->all())->except(['authorization', 'cookie', 'x-csrf-token'])->toArray();
+            if (!empty($headers)) {
+                $formattedHeaders = [];
+                foreach ($headers as $key => $values) {
+                    $formattedHeaders[] = $key . ': ' . (is_array($values) ? implode(', ', $values) : $values);
+                }
+                $standardAttributes['http.request_headers'] = implode("\n", $formattedHeaders);
+            }
+            
+            // Add session ID for correlation (but not the session content)
+            if (request()->hasSession()) {
+                $standardAttributes['session.id'] = request()->session()->getId();
             }
         }
         
