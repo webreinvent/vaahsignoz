@@ -9,6 +9,9 @@ use OpenTelemetry\SDK\Resource\ResourceInfo;
 use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
 use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
+use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
+use OpenTelemetry\API\Trace\SpanInterface;
+use OpenTelemetry\API\Trace\SpanContextInterface;
 
 use GuzzleHttp\Psr7\HttpFactory;
 use OpenTelemetry\SDK\Common\Attribute\Attributes;
@@ -16,6 +19,7 @@ use OpenTelemetry\SDK\Common\Attribute\Attributes;
 class TracerFactory
 {
     protected static $tracer = null;
+    protected static $currentSpan = null;
 
     public static function getSetupConfig()
     {
@@ -100,5 +104,157 @@ class TracerFactory
         );
 
         return self::$tracer;
+    }
+    
+    /**
+     * Store the current span for correlation
+     *
+     * @param SpanInterface $span
+     * @return void
+     */
+    public static function setCurrentSpan(SpanInterface $span)
+    {
+        self::$currentSpan = $span;
+        
+        // Store trace and span IDs for correlation with logs and exceptions
+        $spanContext = $span->getContext();
+        if ($spanContext instanceof SpanContextInterface) {
+            // Get trace and span IDs in the correct format for OpenTelemetry
+            $traceId = $spanContext->getTraceId();
+            $spanId = $spanContext->getSpanId();
+            
+            // Format IDs as hex strings if they're not already
+            if (!ctype_xdigit($traceId)) {
+                $traceId = bin2hex($traceId);
+            }
+            
+            if (!ctype_xdigit($spanId)) {
+                $spanId = bin2hex($spanId);
+            }
+            
+            // Store formatted IDs
+            InstrumentationHelper::setCurrentTraceId($traceId);
+            InstrumentationHelper::setCurrentSpanId($spanId);
+            
+            // If there's an exception ID, add it to the span for correlation
+            $exceptionId = InstrumentationHelper::getCurrentExceptionId();
+            if ($exceptionId) {
+                $span->setAttribute('exception.id', $exceptionId);
+                $span->setAttribute('log.correlation_id', $exceptionId);
+            }
+        }
+    }
+    
+    /**
+     * Get the current span
+     *
+     * @return SpanInterface|null
+     */
+    public static function getCurrentSpan()
+    {
+        return self::$currentSpan;
+    }
+    
+    /**
+     * Create a span with standardized naming and attributes
+     * 
+     * @param string $operationName Base operation name
+     * @param array $attributes Additional attributes to add to the span
+     * @param string $spanKind The kind of span (server, client, producer, consumer, internal)
+     * @param SpanInterface|null $parentSpan Parent span if this is a child span
+     * @return SpanInterface
+     */
+    public static function createSpan($operationName, $attributes = [], $spanKind = null, $parentSpan = null)
+    {
+        $tracer = self::getTracer();
+        
+        // Normalize operation name according to OpenTelemetry conventions
+        // Format: <component>.<operation>.<detail>
+        $normalizedName = self::normalizeSpanName($operationName);
+        
+        // Start building the span
+        $spanBuilder = $tracer->spanBuilder($normalizedName);
+        
+        // Set the span kind if provided
+        if ($spanKind) {
+            $spanBuilder->setSpanKind($spanKind);
+        }
+        
+        // Set the parent span if provided
+        if ($parentSpan) {
+            $spanBuilder->setParent($parentSpan->getContext());
+        }
+        
+        // Add standard attributes that should be on all spans
+        $standardAttributes = [
+            'service.name' => config('vaahsignoz.otel.service_name', 'laravel-app'),
+            'service.version' => config('vaahsignoz.otel.version', '1.0.0'),
+            'deployment.environment' => config('vaahsignoz.otel.environment', 'production'),
+            'host.name' => \WebReinvent\VaahSignoz\Helpers\InstrumentationHelper::getHostIdentifier()
+        ];
+        
+        // Add request context if available
+        if (request()) {
+            $standardAttributes['http.method'] = request()->method();
+            $standardAttributes['http.url'] = request()->fullUrl();
+            $standardAttributes['http.target'] = request()->path();
+            $standardAttributes['http.user_agent'] = request()->userAgent();
+            $standardAttributes['http.client_ip'] = request()->ip();
+            
+            // Add route information if available
+            if (request()->route()) {
+                $routeName = request()->route()->getName();
+                if ($routeName) {
+                    $standardAttributes['http.route'] = $routeName;
+                }
+            }
+        }
+        
+        // Merge standard attributes with custom attributes
+        $allAttributes = array_merge($standardAttributes, $attributes);
+        
+        // Add all attributes to the span
+        foreach ($allAttributes as $key => $value) {
+            $spanBuilder->setAttribute($key, $value);
+        }
+        
+        // Start the span
+        $span = $spanBuilder->startSpan();
+        
+        // Store the current span for correlation
+        self::setCurrentSpan($span);
+        
+        return $span;
+    }
+    
+    /**
+     * Normalize span name according to OpenTelemetry conventions
+     * 
+     * @param string $name
+     * @return string
+     */
+    protected static function normalizeSpanName($name)
+    {
+        // Remove any characters that aren't alphanumeric, dots, underscores, or hyphens
+        $name = preg_replace('/[^a-zA-Z0-9\._\-]/', '_', $name);
+        
+        // Convert camelCase to snake_case for consistency
+        $name = preg_replace('/([a-z])([A-Z])/', '$1_$2', $name);
+        
+        // Convert to lowercase for consistency
+        $name = strtolower($name);
+        
+        // Replace multiple dots with a single dot
+        $name = preg_replace('/\.+/', '.', $name);
+        
+        // Replace multiple underscores with a single underscore
+        $name = preg_replace('/_+/', '_', $name);
+        
+        // Limit the length to keep span names manageable
+        if (strlen($name) > 100) {
+            $name = substr($name, 0, 100);
+        }
+        
+        return $name;
     }
 }
