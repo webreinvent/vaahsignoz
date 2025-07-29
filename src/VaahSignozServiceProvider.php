@@ -10,9 +10,11 @@ class VaahSignozServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/vaahsignoz.php', 'vaahsignoz');
 
+        if (config('vaahsignoz.enabled')) {
         $this->app->singleton('vaahsignoz', function ($app) {
             return new VaahSignoz();
         });
+        }
     }
 
     public function boot()
@@ -30,5 +32,8 @@ class VaahSignozServiceProvider extends ServiceProvider
             (new \WebReinvent\VaahSignoz\Instrumentation\LogInstrumentation())->boot();
         }
 
+        if (config('vaahsignoz.enabled') && config('vaahsignoz.instrumentations.exception', true)) {
+            (new \WebReinvent\VaahSignoz\Instrumentation\ExceptionInstrumentation())->boot();
+        }
     }
 }
