@@ -6,6 +6,7 @@ use Illuminate\Support\ServiceProvider;
 use Illuminate\Contracts\Foundation\CachesRoutes;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use WebReinvent\VaahSignoz\Meter\MeterFactory;
+use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 
 class VaahSignozServiceProvider extends ServiceProvider
 {
@@ -13,11 +14,11 @@ class VaahSignozServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__ . '/../config/vaahsignoz.php', 'vaahsignoz');
 
-        if (config('vaahsignoz.enabled')) {
-            $this->app->singleton('vaahsignoz', function ($app) {
-                return new VaahSignoz();
-            });
-        }
+        // Always register singleton so the Facade works even when disabled.
+        // The VaahSignoz class checks `enabled` in each method.
+        $this->app->singleton('vaahsignoz', function ($app) {
+            return new VaahSignoz();
+        });
     }
 
     public function boot()
@@ -42,6 +43,10 @@ class VaahSignozServiceProvider extends ServiceProvider
         $this->app->terminating(function () {
             TracerFactory::shutdown();
             MeterFactory::shutdown();
+
+            // Clear correlation IDs to prevent leaking across requests
+            // (critical for CLI/queue workers where static state persists)
+            InstrumentationHelper::clearCorrelationIds();
         });
     }
 
@@ -63,7 +68,7 @@ class VaahSignozServiceProvider extends ServiceProvider
         config(['logging.channels.signoz' => [
             'driver' => 'daily',
             'path' => storage_path('logs/signoz.log'),
-            'level' => config('log.level', 'debug'),
+            'level' => 'debug',
             'days' => 7,
         ]]);
     }

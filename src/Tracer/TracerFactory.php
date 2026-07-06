@@ -24,7 +24,6 @@ class TracerFactory
     protected static $tracerProvider = null;
     protected static $currentSpan = null;
     protected static $sharedClient = null;
-    protected static $meterProvider = null;
 
     /* ----------------------------------------------------------------- */
     /*  Config                                                            */
@@ -56,7 +55,7 @@ class TracerFactory
     /*  Shared HTTP Client (connection pooling)                          */
     /* ----------------------------------------------------------------- */
 
-    protected static function getSharedClient(): Client
+    public static function getSharedClient(): Client
     {
         if (self::$sharedClient === null) {
             $otel = config('vaahsignoz.otel');
@@ -250,7 +249,28 @@ class TracerFactory
         }
 
         foreach ($attributes as $key => $value) {
-            $spanBuilder->setAttribute($key, $value);
+            // OTel attributes must be scalar (string, bool, int, float) or arrays thereof
+            if (is_scalar($value) || ($value === null)) {
+                $spanBuilder->setAttribute($key, $value);
+            } elseif (is_array($value)) {
+                // Arrays of scalars are allowed
+                $allScalar = true;
+                foreach ($value as $item) {
+                    if (!is_scalar($item) && $item !== null) {
+                        $allScalar = false;
+                        break;
+                    }
+                }
+                if ($allScalar) {
+                    $spanBuilder->setAttribute($key, $value);
+                } else {
+                    // Fallback: serialize non-scalar arrays
+                    $spanBuilder->setAttribute($key, json_encode($value));
+                }
+            } else {
+                // Non-scalar value — serialize to string
+                $spanBuilder->setAttribute($key, is_object($value) ? get_class($value) : (string) $value);
+            }
         }
 
         $span = $spanBuilder->startSpan();

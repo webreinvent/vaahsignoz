@@ -91,7 +91,8 @@ class MeterFactory
         $config = config('vaahsignoz.otel');
         $endpoint = str_replace('/v1/traces', '/v1/metrics', $config['endpoint'] ?? 'http://localhost:4318/v1/traces');
 
-        $client = self::createClient($config);
+        // Reuse shared HTTP client from TracerFactory for connection pooling
+        $client = TracerFactory::getSharedClient();
         $httpFactory = new HttpFactory();
 
         return new PsrTransport(
@@ -105,17 +106,6 @@ class MeterFactory
             100,
             3
         );
-    }
-
-    /**
-     * Fallback client creation when shared client isn't available
-     */
-    protected static function createClient(array $config): Client
-    {
-        return new Client([
-            'timeout' => $config['http_timeout'] ?? 3.0,
-            'connect_timeout' => $config['http_connect_timeout'] ?? 3.0,
-        ]);
     }
 
     /* ----------------------------------------------------------------- */
@@ -142,9 +132,14 @@ class MeterFactory
 
     /**
      * Create or retrieve a counter metric
+     * Returns a no-op counter if metrics are disabled globally.
      */
     public static function counter(string $name, string $unit = '', string $description = '')
     {
+        if (!config('vaahsignoz.metrics.enabled', true)) {
+            return new NoOpCounter();
+        }
+
         if (!isset(self::$counters[$name])) {
             $meter = self::getMeter();
             self::$counters[$name] = $meter->createCounter($name, $unit, $description);
@@ -155,9 +150,14 @@ class MeterFactory
 
     /**
      * Create or retrieve a histogram metric
+     * Returns a no-op histogram if metrics are disabled globally.
      */
     public static function histogram(string $name, string $unit = '', string $description = '')
     {
+        if (!config('vaahsignoz.metrics.enabled', true)) {
+            return new NoOpHistogram();
+        }
+
         if (!isset(self::$histograms[$name])) {
             $meter = self::getMeter();
             self::$histograms[$name] = $meter->createHistogram($name, $unit, $description);
@@ -168,9 +168,15 @@ class MeterFactory
 
     /**
      * Create or retrieve an up-down counter (gauge-like)
+     * Returns a no-op up-down counter if metrics are disabled globally.
+     * NOTE: Named "gauge" for convenience but creates an UpDownCounter, not ObservableGauge.
      */
     public static function gauge(string $name, string $unit = '', string $description = '')
     {
+        if (!config('vaahsignoz.metrics.enabled', true)) {
+            return new NoOpUpDownCounter();
+        }
+
         if (!isset(self::$gauges[$name])) {
             $meter = self::getMeter();
             self::$gauges[$name] = $meter->createUpDownCounter($name, $unit, $description);

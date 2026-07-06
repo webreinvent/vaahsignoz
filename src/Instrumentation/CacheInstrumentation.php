@@ -49,15 +49,27 @@ class CacheInstrumentation
     }
 
     /**
+     * Extract safe store name from event tags.
+     * Tags property only exists on tagged cache stores.
+     */
+    protected function getStoreName($event): string
+    {
+        if (isset($event->tags) && is_array($event->tags) && count($event->tags) > 0) {
+            return $event->tags[0];
+        }
+
+        return 'default';
+    }
+
+    /**
      * Handle cache hit event
      */
     public function handleHit(CacheHit $event)
     {
         $attributes = [
             'cache.key' => $event->key,
-            'cache.driver' => $event->tags[0] ?? 'unknown',
+            'cache.store' => $this->getStoreName($event),
             'cache.operation' => 'hit',
-            'cache.ttl' => $event->seconds ?? null,
         ];
 
         $span = TracerFactory::createSpan('cache.hit', $attributes);
@@ -73,7 +85,7 @@ class CacheInstrumentation
     {
         $attributes = [
             'cache.key' => $event->key,
-            'cache.driver' => $event->tags[0] ?? 'unknown',
+            'cache.store' => $this->getStoreName($event),
             'cache.operation' => 'miss',
         ];
 
@@ -90,10 +102,14 @@ class CacheInstrumentation
     {
         $attributes = [
             'cache.key' => $event->key,
-            'cache.driver' => $event->tags[0] ?? 'unknown',
+            'cache.store' => $this->getStoreName($event),
             'cache.operation' => 'write',
-            'cache.ttl' => $event->seconds ?? null,
         ];
+
+        // seconds property only exists on KeyWritten events
+        if (isset($event->seconds)) {
+            $attributes['cache.ttl'] = $event->seconds;
+        }
 
         $span = TracerFactory::createSpan('cache.write', $attributes);
         $span->end();
@@ -108,7 +124,7 @@ class CacheInstrumentation
     {
         $attributes = [
             'cache.key' => $event->key,
-            'cache.driver' => $event->tags[0] ?? 'unknown',
+            'cache.store' => $this->getStoreName($event),
             'cache.operation' => 'forget',
         ];
 

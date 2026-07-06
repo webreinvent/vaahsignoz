@@ -23,6 +23,19 @@ class VaahSignoz
     protected array $customInstrumentations = [];
 
     /**
+     * Boot an instrumentation with try-catch so a single failure doesn't break all others.
+     * Each instrumentation's own boot() method checks its config gate.
+     */
+    protected function safeBoot($instrumentation): void
+    {
+        try {
+            $instrumentation->boot();
+        } catch (\Throwable $_) {
+            // This instrumentation failed — continue booting others
+        }
+    }
+
+    /**
      * Automatically instrument enabled services.
      *
      * @throws VaahSignozException
@@ -72,19 +85,23 @@ class VaahSignoz
         }
 
         // N+1 Detection (Phase 4.5)
-        (new NPlusOneDetector())->boot();
+        $this->safeBoot(new NPlusOneDetector());
 
         // Database monitoring (Phase 4.6)
-        (new DatabaseErrorInstrumentation())->boot();
-        (new TransactionInstrumentation())->boot();
-        (new ConnectionMonitorInstrumentation())->boot();
+        $this->safeBoot(new DatabaseErrorInstrumentation());
+        $this->safeBoot(new TransactionInstrumentation());
+        $this->safeBoot(new ConnectionMonitorInstrumentation());
 
         // PHP error capture (Phase 4.6)
-        (new PhpErrorInstrumentation())->boot();
+        $this->safeBoot(new PhpErrorInstrumentation());
 
         // Boot custom registered instrumentations
         foreach ($this->customInstrumentations as $custom) {
-            $custom();
+            try {
+                $custom();
+            } catch (\Throwable $_) {
+                // Custom instrumentation failed — don't break the rest
+            }
         }
     }
 
