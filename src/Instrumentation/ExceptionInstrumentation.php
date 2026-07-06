@@ -61,8 +61,11 @@ class ExceptionInstrumentation
 
                     public function report(Throwable $e)
                     {
-                        $this->instrumentationClass->handleException($e, 'error');
-                        return $this->originalHandler->report($e);
+                        // Let Sentry (and other handlers) capture first — signoz
+                        // runs after as a lightweight observer to avoid competing
+                        // for memory (both reading files, stack traces, etc.)
+                        $this->originalHandler->report($e);
+                        $this->instrumentationClass->handleException($e, 'error', true);
                     }
 
                     public function render($request, Throwable $e)
@@ -107,7 +110,7 @@ class ExceptionInstrumentation
     /**
      * Handle the exception by creating a span and logging it to SigNoz
      */
-    public function handleException(Throwable $exception, string $level)
+    public function handleException(Throwable $exception, string $level, bool $skipHeavy = false)
     {
         try {
             $statusCode = method_exists($exception, 'getStatusCode')
@@ -124,10 +127,10 @@ class ExceptionInstrumentation
             InstrumentationHelper::setCurrentExceptionId($exceptionId);
 
             // Send as log
-            $this->sendExceptionToSigNoz($exception, $level, $statusCode, $exceptionId);
+            $this->sendExceptionToSigNoz($exception, $level, $statusCode, $exceptionId, $skipHeavy);
 
             // Record on active span
-            $this->recordExceptionOnActiveSpan($exception, $level, $statusCode, $exceptionId);
+            $this->recordExceptionOnActiveSpan($exception, $level, $statusCode, $exceptionId, $skipHeavy);
 
         } catch (\Throwable $e) {
             if (config('app.debug')) {
@@ -139,7 +142,7 @@ class ExceptionInstrumentation
     /**
      * Record exception on the current active span
      */
-    protected function recordExceptionOnActiveSpan(Throwable $exception, string $level, int $statusCode, string $exceptionId)
+    protected function recordExceptionOnActiveSpan(Throwable $exception, string $level, int $statusCode, string $exceptionId, bool $skipHeavy = false)
     {
         $tracer = TracerFactory::getTracer();
         $currentSpan = TracerFactory::getCurrentSpan();
@@ -160,8 +163,8 @@ class ExceptionInstrumentation
             $currentSpan->setAttribute('log.severity_text', strtoupper($level));
             $currentSpan->setAttribute('http.status_code', $statusCode);
 
-            // Code context
-            if (file_exists($exception->getFile())) {
+            // Code context (skip if another tool like Sentry already captured it)
+            if (!$skipHeavy && file_exists($exception->getFile())) {
                 $fileLines = file($exception->getFile());
                 if (isset($fileLines[$exception->getLine() - 1])) {
                     $currentSpan->setAttribute('exception.code_line', trim($fileLines[$exception->getLine() - 1]));
@@ -228,7 +231,7 @@ class ExceptionInstrumentation
     /**
      * Send the exception as a log with special exception attributes
      */
-    protected function sendExceptionToSigNoz(Throwable $exception, string $level, int $statusCode, string $exceptionId)
+    protected function sendExceptionToSigNoz(Throwable $exception, string $level, int $statusCode, string $exceptionId, bool $skipHeavy = false)
     {
         try {
             $traceId = InstrumentationHelper::getCurrentTraceId();
@@ -254,7 +257,7 @@ class ExceptionInstrumentation
                                         'severityNumber' => $this->getSeverityNumber($level),
                                         'severityText' => strtoupper($level),
                                         'body' => ['stringValue' => $exception->getMessage()],
-                                        'attributes' => $this->formatExceptionAttributes($exception, $level, $statusCode, $exceptionId),
+                                        'attributes' => $this->formatExceptionAttributes($exception, $level, $statusCode, $exceptionId, $skipHeavy),
                                     ]
                                 ]
                             ]
@@ -322,7 +325,7 @@ class ExceptionInstrumentation
     /**
      * Format exception attributes for SigNoz
      */
-    protected function formatExceptionAttributes(Throwable $exception, string $level, int $statusCode, string $exceptionId): array
+    protected function formatExceptionAttributes(Throwable $exception, string $level, int $statusCode, string $exceptionId, bool $skipHeavy = false): array
     {
         $attributes = [];
 
@@ -338,8 +341,8 @@ class ExceptionInstrumentation
         $attributes[] = ['key' => 'http.status_code', 'value' => ['intValue' => $statusCode]];
         $attributes[] = ['key' => 'exception.record', 'value' => ['boolValue' => true]];
 
-        // Code context
-        if (file_exists($exception->getFile())) {
+        // Code context (skip when heavy mode is off to save memory)
+        if (!$skipHeavy && file_exists($exception->getFile())) {
             $fileLines = file($exception->getFile());
             if (isset($fileLines[$exception->getLine() - 1])) {
                 $attributes[] = ['key' => 'exception.code_line', 'value' => ['stringValue' => trim($fileLines[$exception->getLine() - 1])]];
