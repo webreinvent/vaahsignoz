@@ -43,8 +43,11 @@ class QueryInstrumentation
 
     public function handleQuery(QueryExecuted $event)
     {
+        // $event->connection can be null in some Laravel versions / CLI contexts
+        $driver = $event->connection ? $event->connection->getDriverName() : $event->connectionName;
+
         $span = TracerFactory::createSpan('db.query', [
-            'db.system' => $event->connection->getDriverName(),
+            'db.system' => $driver,
             'db.statement' => $event->sql,
             'db.bindings' => json_encode($event->bindings),
             'db.time' => $event->time,
@@ -63,9 +66,12 @@ class QueryInstrumentation
     {
         $route = request() && request()->route() ? (request()->route()->getName() ?? request()->path()) : 'artisan';
 
+        // $event->connection can be null in some Laravel versions / CLI contexts
+        $driver = $event->connection ? $event->connection->getDriverName() : $event->connectionName;
+
         // Span
         $span = TracerFactory::createSpan('db.slow_query', [
-            'db.system' => $event->connection->getDriverName(),
+            'db.system' => $driver,
             'db.statement' => $event->sql,
             'db.time' => $event->time,
             'db.slow_threshold_ms' => $this->slowThreshold,
@@ -79,7 +85,7 @@ class QueryInstrumentation
             Log::channel('signoz')->warning("Slow query: {$event->sql} ({$event->time}ms)", [
                 'bindings' => $event->bindings,
                 'connection' => $event->connectionName,
-                'driver' => $event->connection->getDriverName(),
+                'driver' => $driver,
                 'threshold_ms' => $this->slowThreshold,
                 'route' => $route,
                 'trace_id' => InstrumentationHelper::getCurrentTraceId(),
@@ -97,7 +103,7 @@ class QueryInstrumentation
         // Metric
         try {
             MeterFactory::counter('db.slow_queries.total')->add(1, [
-                'db.system' => $event->connection->getDriverName(),
+                'db.system' => $driver,
                 'route' => $route,
             ]);
         } catch (\Throwable $_) {
@@ -114,7 +120,7 @@ class QueryInstrumentation
         }
 
         try {
-            $driver = $event->connection->getDriverName();
+            $driver = $event->connection ? $event->connection->getDriverName() : $event->connectionName;
 
             // Histogram: query duration
             MeterFactory::histogram('db.query.duration')
