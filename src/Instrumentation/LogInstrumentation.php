@@ -3,17 +3,21 @@
 namespace WebReinvent\VaahSignoz\Instrumentation;
 
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Event;
 use Illuminate\Log\Events\MessageLogged;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
-use GuzzleHttp\Client;
+use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
 use Illuminate\Http\Request;
 
 class LogInstrumentation
 {
+    /**
+     * Static buffer — collects logs during the request,
+     * flushed on app->terminating() to avoid per-log HTTP calls.
+     */
+    protected static array $logBuffer = [];
+
     protected $vaahSignozConfig;
-    protected $httpClient;
     protected $endpoint;
     protected $serviceName;
 
@@ -34,17 +38,10 @@ class LogInstrumentation
 
         $this->serviceName = $this->vaahSignozConfig['otel']['service_name'] ?? 'laravel-app';
 
-        $certificate = $this->vaahSignozConfig['otel']['certificate'] ?? null;
-        $this->httpClient = new Client([
-            'timeout' => $this->vaahSignozConfig['otel']['http_timeout'] ?? 3.0,
-            'connect_timeout' => $this->vaahSignozConfig['otel']['http_connect_timeout'] ?? 3.0,
-            'verify' => $certificate ?? true, // true = verify TLS; set to false only with explicit config
-        ]);
-
-        // Listen for Laravel log events
+        // Listen for Laravel log events — buffer instead of HTTP call
         Log::listen(function (MessageLogged $event) {
             try {
-                $this->sendLogToSigNoz($event);
+                $this->bufferLog($event);
             } catch (\Throwable $e) {
                 // Prevent logging loops
                 if (config('app.debug')) {
@@ -52,12 +49,17 @@ class LogInstrumentation
                 }
             }
         });
+
+        // Flush buffer at end of request
+        app()->terminating(function () {
+            $this->flushLogs();
+        });
     }
 
     /**
-     * Send log to SigNoz using OTLP format
+     * Buffer a log entry for batch sending.
      */
-    protected function sendLogToSigNoz(MessageLogged $event)
+    protected function bufferLog(MessageLogged $event)
     {
         // Extract file and line information from exception or backtrace
         $fileInfo = $this->extractFileInfo($event);
@@ -109,20 +111,17 @@ class LogInstrumentation
         ];
 
         // Get current trace and span IDs if available
-        $traceId = \WebReinvent\VaahSignoz\Helpers\InstrumentationHelper::getCurrentTraceId();
-        $spanId = \WebReinvent\VaahSignoz\Helpers\InstrumentationHelper::getCurrentSpanId();
-        
-        // Add trace context to the log record if available - this is critical for correlation
+        $traceId = InstrumentationHelper::getCurrentTraceId();
+        $spanId = InstrumentationHelper::getCurrentSpanId();
+
+        // Add trace context to the log record if available
         if ($traceId) {
-            // Add trace_id directly to the log record according to OpenTelemetry spec
-            // Note: SignOz expects trace_id and span_id as attributes for proper correlation
             $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
                 'key' => 'trace_id',
                 'value' => ['stringValue' => $traceId]
             ];
-            
+
             if ($spanId) {
-                // Add span_id directly to the log record according to OpenTelemetry spec
                 $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
                     'key' => 'span_id',
                     'value' => ['stringValue' => $spanId]
@@ -136,43 +135,41 @@ class LogInstrumentation
                 'key' => 'http.target',
                 'value' => ['stringValue' => request()->path()]
             ];
-            
+
             $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
                 'key' => 'http.method',
                 'value' => ['stringValue' => request()->method()]
             ];
-            
+
             $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
                 'key' => 'http.user_agent',
                 'value' => ['stringValue' => request()->userAgent() ?? 'unknown']
             ];
-            
+
             $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
                 'key' => 'http.client_ip',
                 'value' => ['stringValue' => request()->ip()]
             ];
-            
+
             // Add route information if available
             if (request()->route()) {
                 $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
                     'key' => 'http.route',
                     'value' => ['stringValue' => request()->route()->getName() ?? request()->route()->uri()]
                 ];
-                
+
                 // Add controller and action if available
                 $action = request()->route()->getAction();
                 if (isset($action['controller'])) {
                     $controller = $action['controller'];
-                    // Format controller name to include backslashes
                     if (is_string($controller) && strpos($controller, '@') !== false) {
                         $parts = explode('@', $controller);
                         $className = $parts[0];
-                        // Ensure backslashes are preserved in the class name
                         $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
                             'key' => 'http.controller',
                             'value' => ['stringValue' => $className]
                         ];
-                        
+
                         if (isset($parts[1])) {
                             $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
                                 'key' => 'http.action',
@@ -189,18 +186,40 @@ class LogInstrumentation
             }
         }
 
-        try {
-            $response = $this->httpClient->post($this->endpoint, [
-                'json' => $logData,
-                'headers' => [
-                    'Content-Type' => 'application/json'
-                ]
-            ]);
+        self::$logBuffer[] = $logData;
+    }
 
-            return $response->getStatusCode() >= 200 && $response->getStatusCode() < 300;
-        } catch (\Exception $e) {
-            // Silent failure to prevent logging loops
-            return false;
+    /**
+     * Flush all buffered logs in a single batch HTTP call.
+     */
+    protected function flushLogs()
+    {
+        if (empty(self::$logBuffer)) {
+            return;
+        }
+
+        try {
+            $client = TracerFactory::getSharedClient();
+            $logsEndpoint = str_replace('/v1/traces', '/v1/logs', $this->endpoint);
+
+            // Send each buffered log entry
+            foreach (self::$logBuffer as $logData) {
+                try {
+                    $client->post($logsEndpoint, [
+                        'json' => $logData,
+                        'headers' => [
+                            'Content-Type' => 'application/json'
+                        ]
+                    ]);
+                } catch (\Throwable $e) {
+                    // Silent failure to prevent logging loops
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silent failure
+        } finally {
+            // Clear buffer after flush
+            self::$logBuffer = [];
         }
     }
 
@@ -221,11 +240,11 @@ class LogInstrumentation
             $exception = $event->context['exception'];
             $fileInfo['file'] = $exception->getFile();
             $fileInfo['line'] = $exception->getLine();
-            
+
             // Generate and store exception ID if not already set
-            if (!\WebReinvent\VaahSignoz\Helpers\InstrumentationHelper::getCurrentExceptionId()) {
+            if (!InstrumentationHelper::getCurrentExceptionId()) {
                 $exceptionId = md5(get_class($exception) . $exception->getMessage() . $exception->getFile() . $exception->getLine() . microtime(true));
-                \WebReinvent\VaahSignoz\Helpers\InstrumentationHelper::setCurrentExceptionId($exceptionId);
+                InstrumentationHelper::setCurrentExceptionId($exceptionId);
             }
         }
         // Otherwise try to get information from the backtrace
@@ -239,7 +258,7 @@ class LogInstrumentation
                 if (empty($file) || strpos($file, '/vendor/') !== false || strpos($file, '/framework/') !== false) {
                     continue;
                 }
-                
+
                 $fileInfo['file'] = $file;
                 $fileInfo['line'] = $trace['line'] ?? null;
                 $fileInfo['function'] = $trace['function'] ?? null;
@@ -253,7 +272,7 @@ class LogInstrumentation
 
     /**
      * Format attributes for the log record
-     * 
+     *
      * @param array $context
      * @param array $fileInfo
      * @return array
@@ -261,7 +280,7 @@ class LogInstrumentation
     protected function formatAttributes($context, $fileInfo)
     {
         $attributes = [];
-        
+
         // Add file information
         if (isset($fileInfo['file'])) {
             $attributes[] = [
@@ -269,103 +288,99 @@ class LogInstrumentation
                 'value' => ['stringValue' => $fileInfo['file']]
             ];
         }
-        
+
         if (isset($fileInfo['line'])) {
             $attributes[] = [
                 'key' => 'log.file.line',
                 'value' => ['intValue' => $fileInfo['line']]
             ];
         }
-        
+
         if (isset($fileInfo['function'])) {
             $attributes[] = [
                 'key' => 'log.function',
                 'value' => ['stringValue' => $fileInfo['function']]
             ];
         }
-        
+
         if (isset($fileInfo['class'])) {
             $attributes[] = [
                 'key' => 'log.class',
                 'value' => ['stringValue' => $fileInfo['class']]
             ];
         }
-        
+
         // Add exception information if available
         if (isset($context['exception']) && $context['exception'] instanceof \Throwable) {
             $exception = $context['exception'];
-            
+
             $attributes[] = [
                 'key' => 'exception.type',
                 'value' => ['stringValue' => get_class($exception)]
             ];
-            
+
             $attributes[] = [
                 'key' => 'exception.message',
                 'value' => ['stringValue' => $exception->getMessage()]
             ];
-            
+
             $attributes[] = [
                 'key' => 'exception.stacktrace',
                 'value' => ['stringValue' => $exception->getTraceAsString()]
             ];
-            
+
             $attributes[] = [
                 'key' => 'exception.file',
                 'value' => ['stringValue' => $exception->getFile()]
             ];
-            
+
             $attributes[] = [
                 'key' => 'exception.line',
                 'value' => ['intValue' => $exception->getLine()]
             ];
-            
+
             // Get the exception ID for correlation
-            $exceptionId = \WebReinvent\VaahSignoz\Helpers\InstrumentationHelper::getCurrentExceptionId();
+            $exceptionId = InstrumentationHelper::getCurrentExceptionId();
             if ($exceptionId) {
                 $attributes[] = [
                     'key' => 'exception.id',
                     'value' => ['stringValue' => $exceptionId]
                 ];
-                
+
                 $attributes[] = [
                     'key' => 'log.correlation_id',
                     'value' => ['stringValue' => $exceptionId]
                 ];
             }
         }
-        
+
         // Add all context values as attributes
         foreach ($context as $key => $value) {
             // Skip the exception object as we've already processed it
             if ($key === 'exception' && $value instanceof \Throwable) {
                 continue;
             }
-            
+
             // Format the value based on its type
             $formattedValue = $this->formatAttributeValue($key, $value);
             if ($formattedValue) {
                 $attributes[] = $formattedValue;
             }
         }
-        
+
         // Add request information if available
         if (request()) {
             $attributes[] = [
                 'key' => 'http.method',
                 'value' => ['stringValue' => request()->method()]
             ];
-            
-            $attributes[] = [
-                'key' => 'http.url',
-                'value' => ['stringValue' => request()->fullUrl()]
-            ];
-            
+
+            // Use http.target (path only) instead of full URL — avoid PII in query params
             $attributes[] = [
                 'key' => 'http.target',
                 'value' => ['stringValue' => request()->path()]
             ];
-            
+
             if (request()->route()) {
                 $routeName = request()->route()->getName();
                 if ($routeName) {
@@ -375,34 +390,34 @@ class LogInstrumentation
                     ];
                 }
             }
-            
+
             $attributes[] = [
                 'key' => 'http.user_agent',
                 'value' => ['stringValue' => request()->userAgent() ?? '']
             ];
-            
+
             $attributes[] = [
                 'key' => 'http.client_ip',
                 'value' => ['stringValue' => request()->ip()]
             ];
         }
-        
+
         // Add user information if available
         if (auth()->check()) {
             $user = auth()->user();
-            
+
             $attributes[] = [
                 'key' => 'user.id',
                 'value' => ['stringValue' => (string) $user->id]
             ];
-            
+
             if (isset($user->email)) {
                 $attributes[] = [
                     'key' => 'user.email',
                     'value' => ['stringValue' => $user->email]
                 ];
             }
-            
+
             if (isset($user->name)) {
                 $attributes[] = [
                     'key' => 'user.name',
@@ -410,13 +425,13 @@ class LogInstrumentation
                 ];
             }
         }
-        
+
         return $attributes;
     }
-    
+
     /**
      * Format a context value as an attribute for OpenTelemetry
-     * 
+     *
      * @param string $key
      * @param mixed $value
      * @return array|null
@@ -427,7 +442,7 @@ class LogInstrumentation
         if ($value === null) {
             return null;
         }
-        
+
         // Format based on value type
         if (is_string($value)) {
             return [
@@ -470,22 +485,12 @@ class LogInstrumentation
                 ];
             }
         }
-        
+
         // For any other type, convert to string
         return [
             'key' => $key,
             'value' => ['stringValue' => (string) $value]
         ];
-    }
-
-    /**
-     * Get the host identifier - prefer domain name over hostname
-     *
-     * @return string
-     */
-    protected function getHostIdentifier()
-    {
-        return InstrumentationHelper::getHostIdentifier();
     }
 
     /**
@@ -498,7 +503,7 @@ class LogInstrumentation
         if (empty($level)) {
             return 9; // INFO
         }
-        
+
         $map = [
             'debug' => 5,     // DEBUG
             'info' => 9,      // INFO

@@ -14,7 +14,16 @@ use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
  */
 class ConnectionMonitorInstrumentation
 {
-    protected $activeConnections = [];
+    protected static $activeConnections = [];
+
+    /**
+     * Reset active connections. Called on app->terminating()
+     * to prevent memory leaks in PHP-FPM.
+     */
+    public static function reset(): void
+    {
+        self::$activeConnections = [];
+    }
 
     public function boot()
     {
@@ -26,11 +35,11 @@ class ConnectionMonitorInstrumentation
         Event::listen(\Illuminate\Database\Events\QueryExecuted::class, function ($event) {
             $connectionName = $event->connection->getName() ?? 'default';
 
-            $this->activeConnections[$connectionName] = time();
+            self::$activeConnections[$connectionName] = time();
 
             // Gauge: active connections
             try {
-                $count = count(array_unique($this->activeConnections));
+                $count = count(array_unique(self::$activeConnections));
                 MeterFactory::gauge('db.connections.active')
                     ->add($count, ['connection_name' => $connectionName]);
             } catch (\Throwable $_) {

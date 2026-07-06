@@ -165,9 +165,9 @@ class ExceptionInstrumentation
 
             // Code context (skip if another tool like Sentry already captured it)
             if (!$skipHeavy && file_exists($exception->getFile())) {
-                $fileLines = file($exception->getFile());
-                if (isset($fileLines[$exception->getLine() - 1])) {
-                    $currentSpan->setAttribute('exception.code_line', trim($fileLines[$exception->getLine() - 1]));
+                $line = $this->readLine($exception->getFile(), $exception->getLine());
+                if ($line !== null) {
+                    $currentSpan->setAttribute('exception.code_line', trim($line));
                 }
             }
 
@@ -343,18 +343,15 @@ class ExceptionInstrumentation
 
         // Code context (skip when heavy mode is off to save memory)
         if (!$skipHeavy && file_exists($exception->getFile())) {
-            $fileLines = file($exception->getFile());
-            if (isset($fileLines[$exception->getLine() - 1])) {
-                $attributes[] = ['key' => 'exception.code_line', 'value' => ['stringValue' => trim($fileLines[$exception->getLine() - 1])]];
+            $line = $this->readLine($exception->getFile(), $exception->getLine());
+            if ($line !== null) {
+                $attributes[] = ['key' => 'exception.code_line', 'value' => ['stringValue' => trim($line)]];
             }
 
-            $contextLines = [];
-            $startLine = max(0, $exception->getLine() - 3);
-            $endLine = min(count($fileLines), $exception->getLine() + 2);
-            for ($i = $startLine; $i < $endLine; $i++) {
-                $contextLines[] = ($i + 1) . ': ' . trim($fileLines[$i]);
+            $contextLines = $this->readLines($exception->getFile(), max(1, $exception->getLine() - 3), $exception->getLine() + 1);
+            if (!empty($contextLines)) {
+                $attributes[] = ['key' => 'exception.code_context', 'value' => ['stringValue' => implode("\n", $contextLines)]];
             }
-            $attributes[] = ['key' => 'exception.code_context', 'value' => ['stringValue' => implode("\n", $contextLines)]];
         }
 
         // User info (with PII masking)
@@ -395,5 +392,52 @@ class ExceptionInstrumentation
         ];
 
         return $severityMap[$level] ?? 9;
+    }
+
+    /**
+     * Read a single line from a file without loading the entire file.
+     * Memory-efficient alternative to file().
+     */
+    protected function readLine(string $file, int $lineNumber): ?string
+    {
+        try {
+            $fh = fopen($file, 'r');
+            if (!$fh) {
+                return null;
+            }
+            for ($i = 1; $i < $lineNumber && false !== fgets($fh); $i++);
+            $line = fgets($fh);
+            fclose($fh);
+            return $line !== false ? $line : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * Read a range of lines from a file without loading the entire file.
+     * Returns an array of "line_number: line_content" strings.
+     * Memory-efficient alternative to file().
+     */
+    protected function readLines(string $file, int $startLine, int $endLine): array
+    {
+        $lines = [];
+        try {
+            $fh = fopen($file, 'r');
+            if (!$fh) {
+                return [];
+            }
+            $i = 1;
+            while ($i <= $endLine && false !== ($line = fgets($fh))) {
+                if ($i >= $startLine) {
+                    $lines[] = $i . ': ' . trim($line);
+                }
+                $i++;
+            }
+            fclose($fh);
+        } catch (\Throwable $e) {
+            // Fail silently
+        }
+        return $lines;
     }
 }

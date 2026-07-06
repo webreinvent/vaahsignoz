@@ -221,4 +221,16 @@ class MeterFactory
             }
         }
     }
+
+    /**
+     * Reset cached metric instances. Called on app->terminating()
+     * to prevent memory leaks in PHP-FPM where static properties
+     * persist between requests.
+     */
+    public static function reset(): void
+    {
+        self::$counters = [];
+        self::$histograms = [];
+        self::$gauges = [];
+    }
 }
