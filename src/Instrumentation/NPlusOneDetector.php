@@ -137,16 +137,28 @@ class NPlusOneDetector
 
         // Log
         if (config('vaahsignoz.n_plus_one.log', true)) {
-            Log::channel('signoz')->warning(
-                "N+1 query detected on `{$table}` table — {$count} queries in request to '{$route}'",
-                [
-                    'table' => $table,
-                    'count' => $count,
-                    'total_time_ms' => round($totalTime, 2),
-                    'route' => $route,
-                    'threshold' => $this->threshold,
-                ]
-            );
+            try {
+                Log::channel('signoz')->warning(
+                    "N+1 query detected on `{$table}` table — {$count} queries in request to '{$route}'",
+                    [
+                        'table' => $table,
+                        'count' => $count,
+                        'total_time_ms' => round($totalTime, 2),
+                        'route' => $route,
+                        'threshold' => $this->threshold,
+                    ]
+                );
+            } catch (\Throwable $_) {
+                Log::warning(
+                    "N+1 query detected on `{$table}` table — {$count} queries in request to '{$route}'",
+                    [
+                        'table' => $table,
+                        'count' => $count,
+                        'total_time_ms' => round($totalTime, 2),
+                        'threshold' => $this->threshold,
+                    ]
+                );
+            }
         }
     }
 

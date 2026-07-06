@@ -76,14 +76,24 @@ class QueryInstrumentation
         $span->end();
 
         // Log
-        Log::channel('signoz')->warning("Slow query: {$event->sql} ({$event->time}ms)", [
-            'bindings' => $event->bindings,
-            'connection' => $event->connectionName,
-            'driver' => $event->connection->getDriverName(),
-            'threshold_ms' => $this->slowThreshold,
-            'route' => $route,
-            'trace_id' => InstrumentationHelper::getCurrentTraceId(),
-        ]);
+        try {
+            Log::channel('signoz')->warning("Slow query: {$event->sql} ({$event->time}ms)", [
+                'bindings' => $event->bindings,
+                'connection' => $event->connectionName,
+                'driver' => $event->connection->getDriverName(),
+                'threshold_ms' => $this->slowThreshold,
+                'route' => $route,
+                'trace_id' => InstrumentationHelper::getCurrentTraceId(),
+            ]);
+        } catch (\Throwable $_) {
+            Log::warning("Slow query: {$event->sql} ({$event->time}ms)", [
+                'bindings' => $event->bindings,
+                'connection' => $event->connectionName,
+                'threshold_ms' => $this->slowThreshold,
+                'route' => $route,
+                'trace_id' => InstrumentationHelper::getCurrentTraceId(),
+            ]);
+        }
 
         // Metric
         try {

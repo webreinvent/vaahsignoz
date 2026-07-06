@@ -132,15 +132,24 @@ class DatabaseErrorInstrumentation
         // Log
         $logLevel = config('vaahsignoz.database.error_log_level', 'critical');
 
-        Log::channel('signoz')->log($logLevel, "Database error [{$errorType}]: {$e->getMessage()}", [
-            'sql' => $e->getSql(),
-            'bindings' => $e->getBindings(),
-            'error_type' => $errorType,
-            'code' => $e->getCode(),
-            'connection' => $connection,
-            'driver' => $driverName,
-            'trace_id' => InstrumentationHelper::getCurrentTraceId(),
-        ]);
+        try {
+            Log::channel('signoz')->log($logLevel, "Database error [{$errorType}]: {$e->getMessage()}", [
+                'sql' => $e->getSql(),
+                'bindings' => $e->getBindings(),
+                'error_type' => $errorType,
+                'code' => $e->getCode(),
+                'connection' => $connection,
+                'driver' => $driverName,
+                'trace_id' => InstrumentationHelper::getCurrentTraceId(),
+            ]);
+        } catch (\Throwable $_) {
+            Log::log($logLevel, "Database error [{$errorType}]: {$e->getMessage()}", [
+                'sql' => $e->getSql(),
+                'bindings' => $e->getBindings(),
+                'error_type' => $errorType,
+                'trace_id' => InstrumentationHelper::getCurrentTraceId(),
+            ]);
+        }
     }
 
     /**
