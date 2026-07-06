@@ -7,6 +7,14 @@ use WebReinvent\VaahSignoz\Instrumentation\ClientInstrumentation;
 use WebReinvent\VaahSignoz\Instrumentation\ExceptionInstrumentation;
 use WebReinvent\VaahSignoz\Instrumentation\LogInstrumentation;
 use WebReinvent\VaahSignoz\Instrumentation\QueryInstrumentation;
+use WebReinvent\VaahSignoz\Instrumentation\QueueInstrumentation;
+use WebReinvent\VaahSignoz\Instrumentation\EventInstrumentation;
+use WebReinvent\VaahSignoz\Instrumentation\ViewInstrumentation;
+use WebReinvent\VaahSignoz\Instrumentation\NPlusOneDetector;
+use WebReinvent\VaahSignoz\Instrumentation\DatabaseErrorInstrumentation;
+use WebReinvent\VaahSignoz\Instrumentation\TransactionInstrumentation;
+use WebReinvent\VaahSignoz\Instrumentation\PhpErrorInstrumentation;
+use WebReinvent\VaahSignoz\Instrumentation\ConnectionMonitorInstrumentation;
 use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
 
 class VaahSignoz
@@ -24,6 +32,7 @@ class VaahSignoz
     {
         $this->customInstrumentations[] = $bootCallback;
     }
+
     public function autoInstrument()
     {
         $config = config('vaahsignoz');
@@ -34,6 +43,7 @@ class VaahSignoz
 
         $types = $config['instrumentations'] ?? [];
 
+        // Core instrumentations
         if ($types['cache'] ?? false) {
             (new CacheInstrumentation())->boot();
         }
@@ -49,6 +59,28 @@ class VaahSignoz
         if ($types['query'] ?? false) {
             (new QueryInstrumentation())->boot();
         }
+
+        // Extended instrumentations (Phase 4)
+        if ($types['queue'] ?? false) {
+            (new QueueInstrumentation())->boot();
+        }
+        if ($types['event'] ?? false) {
+            (new EventInstrumentation())->boot();
+        }
+        if ($types['view'] ?? false) {
+            (new ViewInstrumentation())->boot();
+        }
+
+        // N+1 Detection (Phase 4.5)
+        (new NPlusOneDetector())->boot();
+
+        // Database monitoring (Phase 4.6)
+        (new DatabaseErrorInstrumentation())->boot();
+        (new TransactionInstrumentation())->boot();
+        (new ConnectionMonitorInstrumentation())->boot();
+
+        // PHP error capture (Phase 4.6)
+        (new PhpErrorInstrumentation())->boot();
 
         // Boot custom registered instrumentations
         foreach ($this->customInstrumentations as $custom) {
@@ -78,6 +110,30 @@ class VaahSignoz
                 break;
             case 'query':
                 (new QueryInstrumentation())->boot();
+                break;
+            case 'queue':
+                (new QueueInstrumentation())->boot();
+                break;
+            case 'event':
+                (new EventInstrumentation())->boot();
+                break;
+            case 'view':
+                (new ViewInstrumentation())->boot();
+                break;
+            case 'n_plus_one':
+                (new NPlusOneDetector())->boot();
+                break;
+            case 'db_errors':
+                (new DatabaseErrorInstrumentation())->boot();
+                break;
+            case 'transactions':
+                (new TransactionInstrumentation())->boot();
+                break;
+            case 'php_errors':
+                (new PhpErrorInstrumentation())->boot();
+                break;
+            case 'connection_monitor':
+                (new ConnectionMonitorInstrumentation())->boot();
                 break;
             default:
                 throw new VaahSignozException("Unsupported instrumentation: $type");
