@@ -39,7 +39,9 @@ class QueueInstrumentation
         $job = $event->job;
         $jobId = $job->getJobId() ?? 'unknown';
         $queue = $job->getQueue() ?? 'default';
-        $jobName = $job->getName() ?? 'unknown';
+        $jobName = method_exists($job, 'getName')
+            ? ($job->getName() ?? 'unknown')
+            : class_basename(get_class($job));
 
         $span = TracerFactory::createSpan('queue.job', [
             'queue.name' => $queue,
@@ -98,9 +100,15 @@ class QueueInstrumentation
 
     public function handleJobQueued(JobQueued $event)
     {
+        // $event->job is the actual job instance (not a queue job wrapper),
+        // so we get the class name instead of calling getName().
+        $jobName = method_exists($event->job, 'getName')
+            ? ($event->job->getName() ?? 'unknown')
+            : class_basename(get_class($event->job));
+
         MeterFactory::counter('queue.jobs.enqueued')->add(1, [
             'queue' => $event->connectionName ?? 'default',
-            'job' => $event->job->getName() ?? 'unknown',
+            'job' => $jobName,
         ]);
     }
 
