@@ -103,7 +103,7 @@ class RequestInstrumentation
             $span->setAttribute('process.peak_memory_usage_bytes', memory_get_peak_usage(true));
 
             // Record HTTP metrics
-            $route = $request->route()->getName() ?? $request->path();
+            $route = $request->route() ? ($request->route()->getName() ?? $request->path()) : $request->path();
             HttpMetrics::record(
                 $request->method(),
                 $route,
@@ -133,7 +133,7 @@ class RequestInstrumentation
             InstrumentationHelper::setSpanStatus($span, 'error', $e->getMessage());
 
             // Record error metric
-            $route = $request->route()->getName() ?? $request->path();
+            $route = $request->route() ? ($request->route()->getName() ?? $request->path()) : $request->path();
             HttpMetrics::record(
                 $request->method(),
                 $route,
