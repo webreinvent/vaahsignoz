@@ -9,6 +9,7 @@ use Illuminate\Cache\Events\KeyWritten;
 use Illuminate\Cache\Events\KeyForgotten;
 use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
+use WebReinvent\VaahSignoz\Meter\MeterFactory;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 
 class CacheInstrumentation
@@ -32,12 +33,12 @@ class CacheInstrumentation
     public function boot()
     {
         try {
-            // Only register event listeners if cache instrumentation is enabled
-            if (!isset($this->vaahSignozConfig['instrumentation']['cache']) || 
-                !$this->vaahSignozConfig['instrumentation']['cache']) {
+            // Fixed: use 'instrumentations' (plural) config key
+            if (!isset($this->vaahSignozConfig['instrumentations']['cache']) ||
+                !$this->vaahSignozConfig['instrumentations']['cache']) {
                 return;
             }
-            
+
             Event::listen(CacheHit::class, [$this, 'handleHit']);
             Event::listen(CacheMissed::class, [$this, 'handleMiss']);
             Event::listen(KeyWritten::class, [$this, 'handleWrite']);
@@ -58,15 +59,11 @@ class CacheInstrumentation
             'cache.operation' => 'hit',
             'cache.ttl' => $event->seconds ?? null,
         ];
-        
-        // Use the standardized span creation method
+
         $span = TracerFactory::createSpan('cache.hit', $attributes);
-        
-        // Add standard service information
-        $this->addStandardAttributes($span);
-        
-        // End the span to ensure it's sent to SignOz
         $span->end();
+
+        $this->recordMetrics('hit');
     }
 
     /**
@@ -79,15 +76,11 @@ class CacheInstrumentation
             'cache.driver' => $event->tags[0] ?? 'unknown',
             'cache.operation' => 'miss',
         ];
-        
-        // Use the standardized span creation method
+
         $span = TracerFactory::createSpan('cache.miss', $attributes);
-        
-        // Add standard service information
-        $this->addStandardAttributes($span);
-        
-        // End the span to ensure it's sent to SignOz
         $span->end();
+
+        $this->recordMetrics('miss');
     }
 
     /**
@@ -101,15 +94,11 @@ class CacheInstrumentation
             'cache.operation' => 'write',
             'cache.ttl' => $event->seconds ?? null,
         ];
-        
-        // Use the standardized span creation method
+
         $span = TracerFactory::createSpan('cache.write', $attributes);
-        
-        // Add standard service information
-        $this->addStandardAttributes($span);
-        
-        // End the span to ensure it's sent to SignOz
         $span->end();
+
+        $this->recordMetrics('write');
     }
 
     /**
@@ -122,37 +111,26 @@ class CacheInstrumentation
             'cache.driver' => $event->tags[0] ?? 'unknown',
             'cache.operation' => 'forget',
         ];
-        
-        // Use the standardized span creation method
+
         $span = TracerFactory::createSpan('cache.forget', $attributes);
-        
-        // Add standard service information
-        $this->addStandardAttributes($span);
-        
-        // End the span to ensure it's sent to SignOz
         $span->end();
+
+        $this->recordMetrics('forget');
     }
-    
+
     /**
-     * Add standard attributes to a span
+     * Record cache metrics
      */
-    protected function addStandardAttributes($span)
+    protected function recordMetrics(string $operation)
     {
-        $span->setAttribute('service.name', $this->vaahSignozConfig['otel']['service_name'] ?? 'laravel-app');
-        $span->setAttribute('service.version', $this->vaahSignozConfig['otel']['version'] ?? '1.0.0');
-        $span->setAttribute('deployment.environment', $this->vaahSignozConfig['otel']['environment'] ?? 'production');
-        $span->setAttribute('host.name', InstrumentationHelper::getHostIdentifier());
-        
-        // Add current trace and span IDs for correlation
-        $traceId = InstrumentationHelper::getCurrentTraceId();
-        $spanId = InstrumentationHelper::getCurrentSpanId();
-        
-        if ($traceId) {
-            $span->setAttribute('trace_id', $traceId);
-            
-            if ($spanId) {
-                $span->setAttribute('span_id', $spanId);
-            }
+        if (!config('vaahsignoz.metrics.cache', true)) {
+            return;
+        }
+
+        try {
+            MeterFactory::counter('cache.operations.total')
+                ->add(1, ['operation' => $operation]);
+        } catch (\Throwable $_) {
         }
     }
 }

@@ -28,7 +28,13 @@ class LogInstrumentation
         }
 
         $this->serviceName = $this->vaahSignozConfig['otel']['service_name'] ?? 'laravel-app';
-        $this->httpClient = new Client(['timeout' => 3.0, 'verify' => false]);
+
+        $certificate = $this->vaahSignozConfig['otel']['certificate'] ?? null;
+        $this->httpClient = new Client([
+            'timeout' => $this->vaahSignozConfig['otel']['http_timeout'] ?? 3.0,
+            'connect_timeout' => $this->vaahSignozConfig['otel']['http_connect_timeout'] ?? 3.0,
+            'verify' => $certificate ?? true, // true = verify TLS; set to false only with explicit config
+        ]);
 
         // Listen for Laravel log events
         Log::listen(function (MessageLogged $event) {

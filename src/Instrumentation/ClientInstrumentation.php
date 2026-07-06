@@ -39,8 +39,8 @@ class ClientInstrumentation
     {
         try {
             // Only register event listeners if HTTP client instrumentation is enabled
-            if (!isset($this->vaahSignozConfig['instrumentation']['http_client']) || 
-                !$this->vaahSignozConfig['instrumentation']['http_client']) {
+            if (!isset($this->vaahSignozConfig['instrumentations']['client']) ||
+                !$this->vaahSignozConfig['instrumentations']['client']) {
                 return;
             }
             
