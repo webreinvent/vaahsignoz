@@ -332,13 +332,22 @@ class TracerFactory
         $parent = $parentSpan ?? self::$currentSpan;
         if ($parent) {
             // setParent() expects ContextInterface, not SpanContext
-            // Activate the parent span to push it into ContextStorage,
-            // then get the context from there for setParent()
+            // activate() returns a Scope that contains the parent context
             $scope = $parent->activate();
-            $context = ContextStorage::getStorage()->active();
+
+            // Determine the correct context to pass to setParent()
+            // based on SDK version
+            $context = null;
+            if (method_exists($scope, 'getContext')) {
+                $context = $scope->getContext();
+            } elseif ($scope instanceof \OpenTelemetry\Context\ContextInterface) {
+                $context = $scope;
+            }
+
             if ($context !== null) {
                 $spanBuilder->setParent($context);
             }
+
             $scope->detach();
         }
 
