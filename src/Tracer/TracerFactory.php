@@ -14,7 +14,6 @@ use OpenTelemetry\SDK\Trace\TracerProvider;
 use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
 use OpenTelemetry\API\Trace\SpanInterface;
 use OpenTelemetry\API\Trace\SpanContextInterface;
-use OpenTelemetry\Context\ContextStorage;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 
 class TracerFactory
@@ -327,28 +326,8 @@ class TracerFactory
             $spanBuilder->setSpanKind($spanKind);
         }
 
-        // Use explicit parent if provided, otherwise auto-link to current active span
-        // This ensures all spans are part of the same trace tree
-        $parent = $parentSpan ?? self::$currentSpan;
-        if ($parent) {
-            // setParent() expects ContextInterface, not SpanContext
-            // activate() returns a Scope that contains the parent context
-            $scope = $parent->activate();
-
-            // Determine the correct context to pass to setParent()
-            // based on SDK version
-            $context = null;
-            if (method_exists($scope, 'getContext')) {
-                $context = $scope->getContext();
-            } elseif ($scope instanceof \OpenTelemetry\Context\ContextInterface) {
-                $context = $scope;
-            }
-
-            if ($context !== null) {
-                $spanBuilder->setParent($context);
-            }
-
-            $scope->detach();
+        if ($parentSpan) {
+            $spanBuilder->setParent($parentSpan->getContext());
         }
 
         // Add request-level attributes only when relevant (not on every span)

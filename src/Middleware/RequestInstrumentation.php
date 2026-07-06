@@ -20,13 +20,8 @@ class RequestInstrumentation
      */
     public function handle(Request $request, Closure $next)
     {
-        $setupConfig = TracerFactory::getSetupConfig();
-        $tracer = TracerFactory::getTracer();
-
-        // Build a more descriptive span name
-        $spanName = $this->buildSpanName($request);
-
-        // Start the span - no duplicate service attributes (ResourceInfo handles those)
+        // Start the root HTTP span via TracerFactory::createSpan()
+        // which calls setCurrentSpan() for child span correlation
         $span = TracerFactory::createSpan(
             $this->buildSpanName($request),
             [
