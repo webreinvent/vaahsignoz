@@ -131,12 +131,8 @@ class TracerFactory
         $sampler = self::createSampler();
 
         // BatchSpanProcessor for performance (buffers spans, exports in batches)
-        $batchConfig = config('vaahsignoz.otel');
-        $processor = (new BatchSpanProcessorBuilder($exporter))
-            ->setScheduleDelay((int) ($batchConfig['batch_timeout'] ?? 5000))
-            ->setExportTimeout((int) ($batchConfig['export_timeout'] ?? 3000))
-            ->setMaxExportBatchSize((int) ($batchConfig['batch_max_size'] ?? 512))
-            ->build();
+        // Support both old BatchSpanProcessorBuilder (1.x) and new BatchSpanProcessor::builder() patterns
+        $processor = self::createBatchSpanProcessor($exporter);
 
         $tracerProvider = new TracerProvider(
             $processor,
@@ -147,6 +143,47 @@ class TracerFactory
         self::$tracerProvider = $tracerProvider;
 
         return $tracerProvider;
+    }
+
+    /**
+     * Create BatchSpanProcessor with version-agnostic approach.
+     * Supports both BatchSpanProcessorBuilder (1.x old) and BatchSpanProcessor::builder() (1.x new).
+     */
+    protected static function createBatchSpanProcessor($exporter)
+    {
+        $batchConfig = config('vaahsignoz.otel');
+
+        // Try BatchSpanProcessor::builder() (newer 1.x API)
+        if (method_exists(\OpenTelemetry\SDK\Trace\SpanProcessor\BatchSpanProcessor::class, 'builder')) {
+            $builder = \OpenTelemetry\SDK\Trace\SpanProcessor\BatchSpanProcessor::builder($exporter);
+
+            if (method_exists($builder, 'setMaxExportBatchSize')) {
+                $builder->setMaxExportBatchSize((int) ($batchConfig['batch_max_size'] ?? 512));
+            }
+            if (method_exists($builder, 'setScheduleDelay')) {
+                $builder->setScheduleDelay((int) ($batchConfig['batch_timeout'] ?? 5000));
+            }
+            if (method_exists($builder, 'setExportTimeout')) {
+                $builder->setExportTimeout((int) ($batchConfig['export_timeout'] ?? 3000));
+            }
+
+            return $builder->build();
+        }
+
+        // Fallback: BatchSpanProcessorBuilder (older 1.x API)
+        $builder = new BatchSpanProcessorBuilder($exporter);
+
+        if (method_exists($builder, 'setMaxExportBatchSize')) {
+            $builder->setMaxExportBatchSize((int) ($batchConfig['batch_max_size'] ?? 512));
+        }
+        if (method_exists($builder, 'setScheduleDelay')) {
+            $builder->setScheduleDelay((int) ($batchConfig['batch_timeout'] ?? 5000));
+        }
+        if (method_exists($builder, 'setExportTimeout')) {
+            $builder->setExportTimeout((int) ($batchConfig['export_timeout'] ?? 3000));
+        }
+
+        return $builder->build();
     }
 
     /**
