@@ -5,7 +5,6 @@ namespace WebReinvent\VaahSignoz\Instrumentation;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
-use OpenTelemetry\API\Trace\StatusCode;
 use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use OpenTelemetry\API\Trace\Propagation\TraceContextPropagator;
@@ -121,7 +120,14 @@ class ClientInstrumentation
         // However, RequestSending fires AFTER headers are set, so we use a workaround:
         // store headers to inject on the next request via static state.
         $carrier = [];
-        TraceContextPropagator::getInstance()->inject($carrier, null, Context::getCurrent());
+        // Version-agnostic inject: SDK 1.6+ accepts 3 args (carrier, hook, context);
+        // older versions only accept 2 (carrier, hook).
+        $ref = new \ReflectionMethod(TraceContextPropagator::class, 'inject');
+        if (count($ref->getParameters()) >= 3) {
+            TraceContextPropagator::getInstance()->inject($carrier, null, Context::getCurrent());
+        } else {
+            TraceContextPropagator::getInstance()->inject($carrier);
+        }
 
         // Add correlation ID header
         $carrier['X-Correlation-ID'] = $requestId;
@@ -195,14 +201,14 @@ class ClientInstrumentation
         
         // Set appropriate status based on HTTP status code
         if ($statusCode >= 500) {
-            $span->setStatus(StatusCode::STATUS_ERROR, 'Server error');
+            InstrumentationHelper::setSpanStatus($span, 'error', 'Server error');
             $span->setAttribute('http.status_severity', 'error');
         } elseif ($statusCode >= 400) {
             // OpenTelemetry does not have a "warning" status, so use unset and add an attribute
-            $span->setStatus(StatusCode::STATUS_UNSET, 'Client warning');
+            InstrumentationHelper::setSpanStatus($span, 'unset', 'Client warning');
             $span->setAttribute('http.status_severity', 'warning');
         } else {
-            $span->setStatus(StatusCode::STATUS_OK, 'OK');
+            InstrumentationHelper::setSpanStatus($span, 'ok', 'OK');
             $span->setAttribute('http.status_severity', 'ok');
         }
         

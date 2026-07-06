@@ -6,8 +6,8 @@ use Illuminate\Database\Events\TransactionBeginning;
 use Illuminate\Database\Events\TransactionCommitted;
 use Illuminate\Database\Events\TransactionRolledBack;
 use Illuminate\Support\Facades\Event;
-use OpenTelemetry\API\Trace\StatusCode;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
+use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 
 /**
  * Tracks database transactions: begin, commit, rollback.
@@ -80,7 +80,7 @@ class TransactionInstrumentation
             $span = array_pop(self::$activeTransactions[$connectionName]);
             $span->setAttribute('db.transaction.event', 'rollback');
             $span->setAttribute('db.transaction.status', 'rolled_back');
-            $span->setStatus(StatusCode::STATUS_ERROR, 'Transaction rolled back');
+            InstrumentationHelper::setSpanStatus($span, 'error', 'Transaction rolled back');
             $span->end();
 
             // Clean up empty stacks

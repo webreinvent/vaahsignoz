@@ -3,7 +3,6 @@
 namespace WebReinvent\VaahSignoz\Tracer;
 
 use OpenTelemetry\Contrib\Otlp\SpanExporter;
-use OpenTelemetry\SDK\Common\Export\Http\PsrTransport;
 use OpenTelemetry\SDK\Common\Export\Http\PsrTransportFactory;
 use OpenTelemetry\Contrib\Otlp\ContentTypes;
 use GuzzleHttp\Client;
@@ -12,10 +11,8 @@ use OpenTelemetry\SDK\Trace\SpanProcessor\BatchSpanProcessorBuilder;
 use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
 use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
-use OpenTelemetry\SDK\Common\Attribute\Attributes;
 use OpenTelemetry\API\Trace\SpanInterface;
 use OpenTelemetry\API\Trace\SpanContextInterface;
-use GuzzleHttp\Psr7\HttpFactory;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 
 class TracerFactory
@@ -73,24 +70,18 @@ class TracerFactory
     /* ----------------------------------------------------------------- */
 
     /**
-     * Create a PsrTransport for a given endpoint.
-     * Shared helper to avoid duplicated transport construction.
+     * Create a transport for a given endpoint using PsrTransportFactory.
+     * Uses the factory pattern recommended by OTel PHP docs to avoid
+     * constructor signature changes across SDK versions.
+     *
+     * PsrTransportFactory::discover() auto-discovers the PSR-18 HTTP client
+     * (Guzzle, Symfony, etc.), eliminating constructor signature issues.
      */
-    public static function createTransport(string $endpoint): PsrTransport
+    public static function createTransport(string $endpoint)
     {
-        $client = self::getSharedClient();
-        $httpFactory = new HttpFactory();
-
-        return new PsrTransport(
-            $client,
-            $httpFactory,
-            $httpFactory,
+        return PsrTransportFactory::discover()->create(
             $endpoint,
-            'application/x-protobuf',
-            [],
-            [],
-            100,  // retryDelay ms
-            3     // maxRetries
+            ContentTypes::PROTOBUF
         );
     }
 
@@ -122,7 +113,10 @@ class TracerFactory
 
         $exporter = self::getExporter();
 
-        $resource_app_info = ResourceInfo::create(Attributes::create($resource_attributes));
+        // Version-agnostic resource creation: ResourceInfo::create() in older SDK
+        // expects an Attributes object; in newer SDK it accepts a plain array.
+        // Use the plain array form which works across all versions.
+        $resource_app_info = ResourceInfo::create($resource_attributes);
 
         $resource = ResourceInfoFactory::defaultResource()
             ->merge($resource_app_info);
@@ -134,11 +128,21 @@ class TracerFactory
         // Support both old BatchSpanProcessorBuilder (1.x) and new BatchSpanProcessor::builder() patterns
         $processor = self::createBatchSpanProcessor($exporter);
 
-        $tracerProvider = new TracerProvider(
-            $processor,
-            $sampler,
-            $resource
-        );
+        // Use builder pattern (TracerProvider::builder) if available (SDK 1.7+),
+        // otherwise fall back to direct constructor for older versions.
+        if (method_exists(TracerProvider::class, 'builder')) {
+            $tracerProvider = TracerProvider::builder()
+                ->addSpanProcessor($processor)
+                ->setResource($resource)
+                ->setSampler($sampler)
+                ->build();
+        } else {
+            $tracerProvider = new TracerProvider(
+                $processor,
+                $sampler,
+                $resource
+            );
+        }
 
         self::$tracerProvider = $tracerProvider;
 
@@ -233,7 +237,12 @@ class TracerFactory
     public static function shutdown(): void
     {
         if (self::$tracerProvider !== null) {
-            self::$tracerProvider->shutdown();
+            // version-agnostic: shutdown() or forceFlush() depending on SDK version
+            if (method_exists(self::$tracerProvider, 'shutdown')) {
+                self::$tracerProvider->shutdown();
+            } elseif (method_exists(self::$tracerProvider, 'forceFlush')) {
+                self::$tracerProvider->forceFlush();
+            }
         }
     }
 

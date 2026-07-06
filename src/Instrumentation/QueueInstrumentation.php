@@ -9,9 +9,9 @@ use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobQueued;
 use Illuminate\Queue\Events\JobReleased;
 use Illuminate\Queue\Events\JobExpired;
-use OpenTelemetry\API\Trace\StatusCode;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use WebReinvent\VaahSignoz\Meter\MeterFactory;
+use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 
 class QueueInstrumentation
 {
@@ -63,7 +63,7 @@ class QueueInstrumentation
 
         if (isset(self::$activeSpans[$jobId])) {
             $data = self::$activeSpans[$jobId];
-            $data['span']->setStatus(StatusCode::STATUS_OK);
+            InstrumentationHelper::setSpanStatus($data['span'], 'ok');
             $data['span']->setAttribute('queue.job.status', 'processed');
             $data['span']->end();
             unset(self::$activeSpans[$jobId]);
@@ -83,7 +83,7 @@ class QueueInstrumentation
 
         if (isset(self::$activeSpans[$jobId])) {
             $data = self::$activeSpans[$jobId];
-            $data['span']->setStatus(StatusCode::STATUS_ERROR, $exception->getMessage());
+            InstrumentationHelper::setSpanStatus($data['span'], 'error', $exception->getMessage());
             $data['span']->setAttribute('queue.job.status', 'failed');
             $data['span']->setAttribute('exception.type', get_class($exception));
             $data['span']->setAttribute('exception.message', $exception->getMessage());

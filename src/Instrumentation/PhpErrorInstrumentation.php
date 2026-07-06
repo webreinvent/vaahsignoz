@@ -3,7 +3,6 @@
 namespace WebReinvent\VaahSignoz\Instrumentation;
 
 use Illuminate\Support\Facades\Log;
-use OpenTelemetry\API\Trace\StatusCode;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use WebReinvent\VaahSignoz\Meter\MeterFactory;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
@@ -63,7 +62,7 @@ class PhpErrorInstrumentation
             'php.error.line' => (string) $line,
             'php.error.message' => $message,
         ]);
-        $span->setStatus(StatusCode::STATUS_ERROR);
+        InstrumentationHelper::setSpanStatus($span, 'error');
         $span->end();
 
         // Log
@@ -99,7 +98,7 @@ class PhpErrorInstrumentation
             'php.error.file' => $error['file'] ?? '',
             'php.error.line' => (string) ($error['line'] ?? 0),
         ]);
-        $span->setStatus(StatusCode::STATUS_ERROR);
+        InstrumentationHelper::setSpanStatus($span, 'error');
         $span->end();
 
         try {

@@ -6,7 +6,6 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
-use OpenTelemetry\API\Trace\StatusCode;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use WebReinvent\VaahSignoz\Meter\MeterFactory;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
@@ -64,7 +63,7 @@ class DatabaseErrorInstrumentation
             'db.duration_ms' => $data->time,
             'db.connection_name' => $data->connectionName ?? 'default',
         ]);
-        $span->setStatus(StatusCode::STATUS_OK);
+        InstrumentationHelper::setSpanStatus($span, 'ok');
         $span->end();
 
         // Increment metric
@@ -111,7 +110,7 @@ class DatabaseErrorInstrumentation
             'exception.code' => $e->getCode(),
             'db.error_type' => $errorType,
         ]);
-        $span->setStatus(StatusCode::STATUS_ERROR);
+        InstrumentationHelper::setSpanStatus($span, 'error');
 
         if ($e->getPrevious()) {
             $span->recordException($e->getPrevious());

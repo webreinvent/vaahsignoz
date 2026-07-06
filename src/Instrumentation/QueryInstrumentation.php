@@ -5,7 +5,6 @@ namespace WebReinvent\VaahSignoz\Instrumentation;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Support\Facades\DB;
-use OpenTelemetry\API\Trace\StatusCode;
 use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use WebReinvent\VaahSignoz\Meter\MeterFactory;
@@ -72,7 +71,7 @@ class QueryInstrumentation
             'db.slow_threshold_ms' => $this->slowThreshold,
             'db.connection_name' => $event->connectionName,
         ]);
-        $span->setStatus(StatusCode::STATUS_ERROR, "Query took {$event->time}ms (threshold: {$this->slowThreshold}ms)");
+        InstrumentationHelper::setSpanStatus($span, 'error', "Query took {$event->time}ms (threshold: {$this->slowThreshold}ms)");
         $span->end();
 
         // Log

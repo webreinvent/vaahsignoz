@@ -6,7 +6,6 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Log\Events\MessageLogged;
 use Throwable;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
-use OpenTelemetry\API\Trace\StatusCode;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
 use Illuminate\Contracts\Debug\ExceptionHandler as ExceptionHandlerContract;
@@ -204,7 +203,7 @@ class ExceptionInstrumentation
 
             // Record exception for SigNoz Exceptions section
             $currentSpan->recordException($exception);
-            $currentSpan->setStatus(StatusCode::STATUS_ERROR, $exception->getMessage());
+            InstrumentationHelper::setSpanStatus($currentSpan, 'error', $exception->getMessage());
 
             if (!TracerFactory::getCurrentSpan()) {
                 $currentSpan->end();

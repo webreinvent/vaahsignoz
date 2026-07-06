@@ -144,7 +144,7 @@ class InstrumentationHelper
     
     /**
      * Get all correlation IDs as an array
-     * 
+     *
      * @return array
      */
     public static function getAllCorrelationIds()
@@ -154,5 +154,40 @@ class InstrumentationHelper
             'trace_id' => self::$currentTraceId,
             'span_id' => self::$currentSpanId
         ];
+    }
+
+    /**
+     * Safely set span status, guarding against SDK version differences.
+     *
+     * In some SDK versions, the StatusCode class may be in a different
+     * namespace or not exist at all. This guard prevents fatal errors.
+     *
+     * @param mixed $span
+     * @param string $status  'ok' | 'error' | 'unset'
+     * @param string|null $description
+     * @return void
+     */
+    public static function setSpanStatus($span, string $status, ?string $description = null): void
+    {
+        // Guard: check if StatusCode class exists (may not in some SDK versions)
+        if (!class_exists(\OpenTelemetry\API\Trace\StatusCode::class)) {
+            return;
+        }
+
+        $statusCode = null;
+        switch (strtolower($status)) {
+            case 'error':
+                $statusCode = \OpenTelemetry\API\Trace\StatusCode::STATUS_ERROR;
+                break;
+            case 'ok':
+                $statusCode = \OpenTelemetry\API\Trace\StatusCode::STATUS_OK;
+                break;
+            case 'unset':
+            default:
+                $statusCode = \OpenTelemetry\API\Trace\StatusCode::STATUS_UNSET;
+                break;
+        }
+
+        $span->setStatus($statusCode, $description);
     }
 }
