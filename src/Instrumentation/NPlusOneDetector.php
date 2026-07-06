@@ -112,7 +112,7 @@ class NPlusOneDetector
      */
     protected function emit(string $table, int $count, float $totalTime)
     {
-        $route = request()->route()->getName() ?? request()->path() ?? 'unknown';
+        $route = request() && request()->route() ? (request()->route()->getName() ?? request()->path()) : 'artisan';
 
         // Span
         if (config('vaahsignoz.n_plus_one.span', true)) {

@@ -62,7 +62,7 @@ class QueryInstrumentation
      */
     protected function handleSlowQuery($connection, $event)
     {
-        $route = request()->route()->getName() ?? request()->path() ?? 'unknown';
+        $route = request() && request()->route() ? (request()->route()->getName() ?? request()->path()) : 'artisan';
 
         // Span
         $span = TracerFactory::createSpan('db.slow_query', [
