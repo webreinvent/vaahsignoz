@@ -27,17 +27,20 @@ class RequestInstrumentation
         $spanName = $this->buildSpanName($request);
 
         // Start the span - no duplicate service attributes (ResourceInfo handles those)
-        $span = $tracer->spanBuilder($spanName)
-            ->setAttribute('http.method', $request->method())
-            ->setAttribute('http.url', $request->fullUrl())
-            ->setAttribute('http.scheme', $request->getScheme())
-            ->setAttribute('http.host', $request->getHost())
-            ->setAttribute('http.target', $request->getRequestUri())
-            ->setAttribute('http.user_agent', $request->userAgent() ?? 'unknown')
-            ->setAttribute('http.client_ip', $request->ip())
-            ->setAttribute('http.request_content_length', $request->header('Content-Length') ?? 0)
-            ->setAttribute('http.request_content_type', $request->header('Content-Type') ?? 'unknown')
-            ->startSpan();
+        $span = TracerFactory::createSpan(
+            $this->buildSpanName($request),
+            [
+                'http.method' => $request->method(),
+                'http.scheme' => $request->getScheme(),
+                'http.host' => $request->getHost(),
+                'http.target' => $request->getRequestUri(),
+                'http.user_agent' => $request->userAgent() ?? 'unknown',
+                'http.client_ip' => $request->ip(),
+                'http.request_content_length' => $request->header('Content-Length') ?? 0,
+                'http.request_content_type' => $request->header('Content-Type') ?? 'unknown',
+            ],
+            \OpenTelemetry\API\Trace\SpanKind::SPAN_KIND_SERVER
+        );
 
         // Add route information if available
         if ($request->route()) {
