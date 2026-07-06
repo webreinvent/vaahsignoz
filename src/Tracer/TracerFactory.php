@@ -326,8 +326,14 @@ class TracerFactory
             $spanBuilder->setSpanKind($spanKind);
         }
 
-        if ($parentSpan) {
-            $spanBuilder->setParent($parentSpan->getContext());
+        // Use explicit parent if provided, otherwise auto-link to current active span
+        // This ensures all spans are part of the same trace tree
+        $parent = $parentSpan ?? self::$currentSpan;
+        if ($parent) {
+            // activate() returns a ContextStorageNode with context(): ContextInterface
+            $scope = $parent->activate();
+            $spanBuilder->setParent($scope->context());
+            $scope->detach();
         }
 
         // Add request-level attributes only when relevant (not on every span)
