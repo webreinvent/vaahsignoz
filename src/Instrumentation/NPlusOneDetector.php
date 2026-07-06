@@ -12,23 +12,16 @@ use Illuminate\Events\Terminating;
 /**
  * Detects N+1 query patterns per request.
  *
- * Algorithm:
- *   1. Track all queries per request with table name.
- *   2. Look for repeated queries on the same table with a single-row WHERE clause
- *      (e.g., WHERE id = ?, WHERE user_id = ?, WHERE tenant_id = ?).
- *   3. If the same table has ≥ threshold repeated single-row queries, it's N+1.
- *   4. Emit span + metric + log once per table per request.
+ * Lightweight implementation: tracks only counts per table (no SQL strings).
+ * Emits once per table per request when threshold is exceeded.
+ * Uses static state to avoid closure capture of $this.
  */
 class NPlusOneDetector
 {
-    protected $queries = [];
-    protected $detected = [];
-    protected $threshold;
-
-    public function __construct()
-    {
-        $this->threshold = config('vaahsignoz.n_plus_one.threshold', 10);
-    }
+    protected static $singleRowCounts = []; // [table] => int
+    protected static $totalTimes = [];     // [table] => float
+    protected static $detected = [];       // [table] => bool
+    protected static $threshold = 10;
 
     public function boot()
     {
@@ -36,58 +29,42 @@ class NPlusOneDetector
             return;
         }
 
-        Event::listen(QueryExecuted::class, [$this, 'handleQuery']);
-        Event::listen(Terminating::class, [$this, 'handleTerminating']);
-    }
+        self::$threshold = config('vaahsignoz.n_plus_one.threshold', 10);
 
-    public function handleQuery(QueryExecuted $event)
-    {
-        $sql = $this->normalizeSql($event->sql);
-        $table = $this->extractTable($sql);
-
-        if (!$table) {
-            return;
-        }
-
-        // Skip if already detected for this table
-        if (isset($this->detected[$table])) {
-            return;
-        }
-
-        // Track query
-        $this->queries[$table][] = [
-            'sql' => $sql,
-            'time' => $event->time,
-            'is_single_row_lookup' => $this->isSingleRowLookup($sql),
-        ];
-
-        // Count single-row lookups for this table
-        $queries = $this->queries[$table];
-        $singleRowCount = 0;
-
-        foreach ($queries as $q) {
-            if ($q['is_single_row_lookup']) {
-                $singleRowCount++;
+        Event::listen(QueryExecuted::class, static function (QueryExecuted $event) {
+            $table = self::extractTable($event->sql);
+            if (!$table) {
+                return;
             }
-        }
 
-        if ($singleRowCount >= $this->threshold) {
-            $totalTime = 0;
-            foreach ($queries as $q) {
-                if ($q['is_single_row_lookup']) {
-                    $totalTime += $q['time'];
+            // Skip if already detected for this table
+            if (isset(self::$detected[$table])) {
+                return;
+            }
+
+            // Only track single-row lookups (no SQL string storage)
+            if (self::isSingleRowLookup($event->sql)) {
+                self::$singleRowCounts[$table] = (self::$singleRowCounts[$table] ?? 0) + 1;
+                self::$totalTimes[$table] = (self::$totalTimes[$table] ?? 0) + $event->time;
+
+                if (self::$singleRowCounts[$table] >= self::$threshold) {
+                    self::$detected[$table] = true;
+                    self::emit($table, self::$singleRowCounts[$table], self::$totalTimes[$table] ?? 0);
                 }
             }
+        });
 
-            $this->detected[$table] = true;
-            $this->emit($table, $singleRowCount, $totalTime);
-        }
+        Event::listen(Terminating::class, static function () {
+            self::$singleRowCounts = [];
+            self::$totalTimes = [];
+            self::$detected = [];
+        });
     }
 
     /**
      * Emit span + metric + log for detected N+1
      */
-    protected function emit(string $table, int $count, float $totalTime)
+    protected static function emit(string $table, int $count, float $totalTime)
     {
         $route = request() && request()->route()
             ? (request()->route()->getName() ?? request()->path())
@@ -127,7 +104,7 @@ class NPlusOneDetector
                         'count' => $count,
                         'total_time_ms' => round($totalTime, 2),
                         'route' => $route,
-                        'threshold' => $this->threshold,
+                        'threshold' => self::$threshold,
                     ]
                 );
             } catch (\Throwable $_) {
@@ -137,34 +114,19 @@ class NPlusOneDetector
                         'table' => $table,
                         'count' => $count,
                         'total_time_ms' => round($totalTime, 2),
-                        'threshold' => $this->threshold,
+                        'threshold' => self::$threshold,
                     ]
                 );
             }
         }
     }
 
-    /**
-     * Handle Laravel's Terminating event — reset state for next request
-     */
-    public function handleTerminating()
-    {
-        $this->queries = [];
-        $this->detected = [];
-    }
-
     /* ----------------------------------------------------------------- */
-    /*  SQL Parsing Helpers                                              */
+    /*  SQL Parsing Helpers (static — no $this capture)                  */
     /* ----------------------------------------------------------------- */
 
-    protected function normalizeSql(string $sql): string
+    protected static function extractTable(string $sql): ?string
     {
-        return trim(str_replace(["\n", "\r", "\t"], ' ', $sql));
-    }
-
-    protected function extractTable(string $sql): ?string
-    {
-        // "FROM `table`" or "FROM table" or "into `table`" or "UPDATE `table`"
         if (preg_match('/(?:FROM|INTO|UPDATE|JOIN)\s+[`"\[]?(\w+)[`"\]]?/i', $sql, $matches)) {
             return strtolower($matches[1]);
         }
@@ -172,32 +134,13 @@ class NPlusOneDetector
         return null;
     }
 
-    /**
-     * Check if SQL is a single-row lookup — i.e., WHERE clause with
-     * a single equality condition on a column that looks like a key
-     * (id, *_id, primary key patterns).
-     *
-     * Handles qualified column names (table.column) — Laravel Eloquent
-     * generates `WHERE users.id = ?` not `WHERE id = ?`.
-     *
-     * Matches:
-     *   WHERE `id` = ?
-     *   WHERE users.id = ?
-     *   WHERE `user_id` = ?
-     *   WHERE posts.author_id = ?
-     *   WHERE email = ?
-     *   WHERE slug = ?
-     *   WHERE users.deleted_at IS NULL AND users.id = ? (AND fallback)
-     */
-    protected function isSingleRowLookup(string $sql): bool
+    protected static function isSingleRowLookup(string $sql): bool
     {
         $column = null;
 
-        // Match WHERE [table.]column = ? (qualified or unqualified)
         if (preg_match('/WHERE\s+[`"\[]?(?:\w+\.)?(\w+)[`"\]]?\s*=\s*[\?\$]/i', $sql, $m)) {
             $column = $m[1];
         }
-        // Fallback: match AND [table.]column = ? (compound WHERE clauses)
         elseif (preg_match('/\bAND\s+[`"\[]?(?:\w+\.)?(\w+)[`"\]]?\s*=\s*[\?\$]/i', $sql, $m)) {
             $column = $m[1];
         }
@@ -206,14 +149,12 @@ class NPlusOneDetector
             return false;
         }
 
-        // Check it's a key-like column: id, *_id, email, slug, uuid, token, code
         $keyColumns = ['id', 'email', 'slug', 'uuid', 'token', 'code', 'username', 'phone'];
 
         if (in_array($column, $keyColumns, true)) {
             return true;
         }
 
-        // Also match *_id pattern (user_id, tenant_id, post_id, etc.)
         if (str_ends_with($column, '_id')) {
             return true;
         }

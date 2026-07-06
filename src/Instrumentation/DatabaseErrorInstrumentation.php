@@ -11,8 +11,11 @@ use WebReinvent\VaahSignoz\Meter\MeterFactory;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 
 /**
- * Captures all database errors: PDO exceptions, connection failures,
+ * Captures database errors: PDO exceptions, connection failures,
  * deadlocks, lock timeouts, lost connections, schema errors.
+ *
+ * Note: Slow query spans are handled by QueryInstrumentation —
+ * this class only captures errors (QueryExceptions).
  */
 class DatabaseErrorInstrumentation
 {
@@ -22,64 +25,26 @@ class DatabaseErrorInstrumentation
             return;
         }
 
-        // Use DB::listen() to capture slow queries and error indicators.
-        // QueryExceptions are caught by the global exception handler
-        // (ExceptionInstrumentation), so we augment them with db-specific
-        // classification by wrapping the listener.
         $this->registerQueryErrorListener();
     }
 
     /**
-     * Register listeners to capture database query errors and slow queries.
+     * Register a listener for database errors.
+     * We don't use DB::listen() here (it fires on every query and adds
+     * closure overhead) — QueryInstrumentation handles slow queries.
+     * This class only handles QueryExceptions via the exception handler.
      */
     protected function registerQueryErrorListener()
     {
-        $threshold = config('vaahsignoz.database.slow_query_threshold_ms', 100);
-
-        DB::listen(function ($data) use ($threshold) {
-            // Capture slow queries
-            if ($data->time >= $threshold) {
-                $this->captureSlowQuery($data);
-            }
-        });
-    }
-
-    /**
-     * Capture a slow query as a span + metric.
-     */
-    public function captureSlowQuery($data)
-    {
-        $driverName = 'unknown';
-
-        try {
-            $driverName = DB::getDriverName() ?? 'unknown';
-        } catch (\Throwable $_) {
-            // Connection may be gone
-        }
-
-        $span = TracerFactory::createSpan('db.slow_query', [
-            'db.system' => $driverName,
-            'db.statement' => $data->sql ?? '',
-            'db.duration_ms' => $data->time,
-            'db.connection_name' => $data->connectionName ?? 'default',
-        ]);
-        InstrumentationHelper::setSpanStatus($span, 'ok');
-        $span->end();
-
-        // Increment metric
-        try {
-            MeterFactory::counter('db.slow_queries.total')->add(1, [
-                'db.system' => $driverName,
-                'route' => request() && request()->route() ? (request()->route()->getName() ?? request()->route()->uri() ?? '') : '',
-            ]);
-        } catch (\Throwable $_) {
-            // Meter may not be ready
-        }
+        // No per-query listener needed — slow queries are handled by
+        // QueryInstrumentation::handleSlowQueryEvent(). We only need to
+        // capture QueryExceptions, which are handled by ExceptionInstrumentation
+        // calling our handleQueryException() method.
+        return;
     }
 
     /**
      * Handle a QueryException that was caught by the global exception handler.
-     * This is called by ExceptionInstrumentation when it encounters a QueryException.
      */
     public function handleQueryException(QueryException $e)
     {
@@ -90,7 +55,6 @@ class DatabaseErrorInstrumentation
     {
         $errorType = $this->classifyError($e);
         $connection = $e->connection ?? 'default';
-        $driver = $e->connection ?? get_class($e);
         $driverName = 'unknown';
 
         try {
@@ -125,7 +89,6 @@ class DatabaseErrorInstrumentation
                 'db.system' => $driverName,
             ]);
         } catch (\Throwable $_) {
-            // Meter may not be ready
         }
 
         // Log

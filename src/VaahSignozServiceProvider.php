@@ -12,7 +12,7 @@ use WebReinvent\VaahSignoz\Instrumentation\ViewInstrumentation;
 use WebReinvent\VaahSignoz\Instrumentation\ClientInstrumentation;
 use WebReinvent\VaahSignoz\Instrumentation\TransactionInstrumentation;
 use WebReinvent\VaahSignoz\Instrumentation\LogInstrumentation;
-use WebReinvent\VaahSignoz\Instrumentation\ConnectionMonitorInstrumentation;
+use WebReinvent\VaahSignoz\Instrumentation\NPlusOneDetector;
 
 class VaahSignozServiceProvider extends ServiceProvider
 {
@@ -94,9 +94,14 @@ class VaahSignozServiceProvider extends ServiceProvider
             $ref->setValue(null, []);
         }
 
-        // ConnectionMonitorInstrumentation: $activeConnections grows per query
-        if (class_exists(ConnectionMonitorInstrumentation::class)) {
-            ConnectionMonitorInstrumentation::reset();
+        // NPlusOneDetector: static arrays (counts, times, detected)
+        if (class_exists(NPlusOneDetector::class)) {
+            $ref1 = new \ReflectionProperty(NPlusOneDetector::class, 'singleRowCounts');
+            $ref1->setValue(null, []);
+            $ref2 = new \ReflectionProperty(NPlusOneDetector::class, 'totalTimes');
+            $ref2->setValue(null, []);
+            $ref3 = new \ReflectionProperty(NPlusOneDetector::class, 'detected');
+            $ref3->setValue(null, []);
         }
     }
 

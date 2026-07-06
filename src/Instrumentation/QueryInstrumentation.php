@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Log;
 
 class QueryInstrumentation
 {
-    protected $slowThreshold;
+    protected static $slowThreshold = 100;
 
     public function boot()
     {
@@ -21,55 +21,43 @@ class QueryInstrumentation
         }
 
         try {
-            $this->slowThreshold = config('vaahsignoz.database.slow_query_threshold_ms', 100);
+            self::$slowThreshold = config('vaahsignoz.database.slow_query_threshold_ms', 100);
 
-            Event::listen(QueryExecuted::class, [$this, 'handleQuery']);
+            Event::listen(QueryExecuted::class, static function (QueryExecuted $event) {
+                // $event->connection can be null in some Laravel versions / CLI contexts
+                $driver = $event->connection ? $event->connection->getDriverName() : $event->connectionName;
+
+                // Only record metrics for every query (lightweight — no span allocation)
+                self::recordMetrics($event, $driver);
+
+                // Only create spans for slow queries
+                $isSlow = $event->time >= self::$slowThreshold;
+
+                if ($isSlow && config('vaahsignoz.database.capture_slow_queries', true)) {
+                    self::handleSlowQueryEvent($event, $driver);
+                }
+            });
         } catch (\Throwable $e) {
             throw new VaahSignozException('Failed to boot query instrumentation.', 0, $e);
         }
     }
 
-    public function handleQuery(QueryExecuted $event)
-    {
-        // $event->connection can be null in some Laravel versions / CLI contexts
-        $driver = $event->connection ? $event->connection->getDriverName() : $event->connectionName;
-
-        $span = TracerFactory::createSpan('db.query', [
-            'db.system' => $driver,
-            'db.statement' => $event->sql,
-            'db.bindings' => json_encode($event->bindings),
-            'db.time' => $event->time,
-            'db.connection_name' => $event->connectionName,
-        ]);
-        $span->end();
-
-        // Metrics
-        $this->recordMetrics($event);
-
-        // Slow query — handled via the same QueryExecuted listener
-        // (DB::whenQueryingForLongerThan passes unreliable data types across Laravel versions)
-        if ($event->time >= $this->slowThreshold && config('vaahsignoz.database.capture_slow_queries', true)) {
-            $this->handleSlowQueryEvent($event);
-        }
-    }
-
     /**
-     * Handle slow query from a proper QueryExecuted event — create span + metric + log
+     * Handle slow query — create span + log + metric
      */
-    protected function handleSlowQueryEvent(QueryExecuted $event)
+    protected static function handleSlowQueryEvent(QueryExecuted $event, string $driver)
     {
         $route = request() && request()->route() ? (request()->route()->getName() ?? request()->path()) : 'artisan';
-        $driver = $event->connection ? $event->connection->getDriverName() : $event->connectionName;
 
-        // Span
+        // Span — only for slow queries
         $span = TracerFactory::createSpan('db.slow_query', [
             'db.system' => $driver,
             'db.statement' => $event->sql,
             'db.time' => $event->time,
-            'db.slow_threshold_ms' => $this->slowThreshold,
+            'db.slow_threshold_ms' => self::$slowThreshold,
             'db.connection_name' => $event->connectionName,
         ]);
-        InstrumentationHelper::setSpanStatus($span, 'error', "Query took {$event->time}ms (threshold: {$this->slowThreshold}ms)");
+        InstrumentationHelper::setSpanStatus($span, 'error', "Query took {$event->time}ms (threshold: " . self::$slowThreshold . "ms)");
         $span->end();
 
         // Log
@@ -78,7 +66,7 @@ class QueryInstrumentation
                 'bindings' => $event->bindings,
                 'connection' => $event->connectionName,
                 'driver' => $driver,
-                'threshold_ms' => $this->slowThreshold,
+                'threshold_ms' => self::$slowThreshold,
                 'route' => $route,
                 'trace_id' => InstrumentationHelper::getCurrentTraceId(),
             ]);
@@ -86,7 +74,7 @@ class QueryInstrumentation
             Log::warning("Slow query: {$event->sql} ({$event->time}ms)", [
                 'bindings' => $event->bindings,
                 'connection' => $event->connectionName,
-                'threshold_ms' => $this->slowThreshold,
+                'threshold_ms' => self::$slowThreshold,
                 'route' => $route,
                 'trace_id' => InstrumentationHelper::getCurrentTraceId(),
             ]);
@@ -103,25 +91,15 @@ class QueryInstrumentation
     }
 
     /**
-     * Record DB query metrics
+     * Record DB query metrics (lightweight — no span allocation)
      */
-    protected function recordMetrics(QueryExecuted $event)
+    protected static function recordMetrics(QueryExecuted $event, string $driver)
     {
         if (!config('vaahsignoz.metrics.db', true)) {
             return;
         }
 
         try {
-            $driver = $event->connection ? $event->connection->getDriverName() : $event->connectionName;
-
-            // Histogram: query duration
-            MeterFactory::histogram('db.query.duration')
-                ->record($event->time, [
-                    'db.system' => $driver,
-                    'db.connection_name' => $event->connectionName,
-                ]);
-
-            // Counter: total queries
             MeterFactory::counter('db.query.total')
                 ->add(1, [
                     'db.system' => $driver,
