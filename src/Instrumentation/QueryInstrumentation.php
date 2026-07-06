@@ -4,7 +4,6 @@ namespace WebReinvent\VaahSignoz\Instrumentation;
 
 use Illuminate\Support\Facades\Event;
 use Illuminate\Database\Events\QueryExecuted;
-use Illuminate\Support\Facades\DB;
 use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use WebReinvent\VaahSignoz\Meter\MeterFactory;
@@ -22,20 +21,9 @@ class QueryInstrumentation
         }
 
         try {
-            Event::listen(QueryExecuted::class, [$this, 'handleQuery']);
-
-            // Slow query capture
             $this->slowThreshold = config('vaahsignoz.database.slow_query_threshold_ms', 100);
 
-            if (config('vaahsignoz.database.capture_slow_queries', true)) {
-                try {
-                    DB::whenQueryingForLongerThan($this->slowThreshold, function ($event) {
-                        $this->handleSlowQuery($event);
-                    });
-                } catch (\Throwable $e) {
-                    // whenQueryingForLongerThan may not exist on all Laravel versions
-                }
-            }
+            Event::listen(QueryExecuted::class, [$this, 'handleQuery']);
         } catch (\Throwable $e) {
             throw new VaahSignozException('Failed to boot query instrumentation.', 0, $e);
         }
@@ -57,16 +45,20 @@ class QueryInstrumentation
 
         // Metrics
         $this->recordMetrics($event);
+
+        // Slow query — handled via the same QueryExecuted listener
+        // (DB::whenQueryingForLongerThan passes unreliable data types across Laravel versions)
+        if ($event->time >= $this->slowThreshold && config('vaahsignoz.database.capture_slow_queries', true)) {
+            $this->handleSlowQueryEvent($event);
+        }
     }
 
     /**
-     * Handle slow query — create span + metric + log
+     * Handle slow query from a proper QueryExecuted event — create span + metric + log
      */
-    protected function handleSlowQuery($event)
+    protected function handleSlowQueryEvent(QueryExecuted $event)
     {
         $route = request() && request()->route() ? (request()->route()->getName() ?? request()->path()) : 'artisan';
-
-        // $event->connection can be null in some Laravel versions / CLI contexts
         $driver = $event->connection ? $event->connection->getDriverName() : $event->connectionName;
 
         // Span
