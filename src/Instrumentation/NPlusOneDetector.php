@@ -177,38 +177,45 @@ class NPlusOneDetector
      * a single equality condition on a column that looks like a key
      * (id, *_id, primary key patterns).
      *
+     * Handles qualified column names (table.column) — Laravel Eloquent
+     * generates `WHERE users.id = ?` not `WHERE id = ?`.
+     *
      * Matches:
      *   WHERE `id` = ?
-     *   WHERE id = ?
+     *   WHERE users.id = ?
      *   WHERE `user_id` = ?
-     *   WHERE tenant_id = ?
+     *   WHERE posts.author_id = ?
      *   WHERE email = ?
      *   WHERE slug = ?
+     *   WHERE users.deleted_at IS NULL AND users.id = ? (AND fallback)
      */
     protected function isSingleRowLookup(string $sql): bool
     {
-        // Match WHERE column = ? (single equality with a binding)
-        // This catches: WHERE `id` = ?, WHERE user_id = ?, WHERE `email` = ?
-        if (preg_match('/WHERE\s+[`"\[]?(\w+)[`"\]]?\s*=\s*[\?\$]/i', $sql, $m)) {
+        $column = null;
+
+        // Match WHERE [table.]column = ? (qualified or unqualified)
+        if (preg_match('/WHERE\s+[`"\[]?(?:\w+\.)?(\w+)[`"\]]?\s*=\s*[\?\$]/i', $sql, $m)) {
             $column = $m[1];
+        }
+        // Fallback: match AND [table.]column = ? (compound WHERE clauses)
+        elseif (preg_match('/\bAND\s+[`"\[]?(?:\w+\.)?(\w+)[`"\]]?\s*=\s*[\?\$]/i', $sql, $m)) {
+            $column = $m[1];
+        }
 
-            // Check it's a key-like column: id, *_id, email, slug, uuid, token, code
-            $keyColumns = ['id', 'email', 'slug', 'uuid', 'token', 'code', 'username', 'phone'];
-            $isKeyColumn = false;
+        if (!$column) {
+            return false;
+        }
 
-            foreach ($keyColumns as $key) {
-                if ($column === $key) {
-                    $isKeyColumn = true;
-                    break;
-                }
-            }
+        // Check it's a key-like column: id, *_id, email, slug, uuid, token, code
+        $keyColumns = ['id', 'email', 'slug', 'uuid', 'token', 'code', 'username', 'phone'];
 
-            // Also match *_id pattern (user_id, tenant_id, post_id, etc.)
-            if (preg_match('/_id$/', $column)) {
-                $isKeyColumn = true;
-            }
+        if (in_array($column, $keyColumns, true)) {
+            return true;
+        }
 
-            return $isKeyColumn;
+        // Also match *_id pattern (user_id, tenant_id, post_id, etc.)
+        if (str_ends_with($column, '_id')) {
+            return true;
         }
 
         return false;
