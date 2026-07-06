@@ -7,6 +7,7 @@ use OpenTelemetry\SDK\Common\Export\Http\PsrTransportFactory;
 use OpenTelemetry\Contrib\Otlp\ContentTypes;
 use GuzzleHttp\Client;
 use OpenTelemetry\SDK\Resource\ResourceInfo;
+use OpenTelemetry\SDK\Common\Attribute\Attributes;
 use OpenTelemetry\SDK\Trace\SpanProcessor\BatchSpanProcessorBuilder;
 use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
@@ -113,10 +114,11 @@ class TracerFactory
 
         $exporter = self::getExporter();
 
-        // Version-agnostic resource creation: ResourceInfo::create() in older SDK
-        // expects an Attributes object; in newer SDK it accepts a plain array.
-        // Use the plain array form which works across all versions.
-        $resource_app_info = ResourceInfo::create($resource_attributes);
+        // Version-agnostic resource creation: ResourceInfo::create()
+        // - Older SDK: expects AttributesInterface
+        // - Newer SDK: accepts plain array
+        // Detect at runtime via reflection.
+        $resource_app_info = self::createResourceInfo($resource_attributes);
 
         $resource = ResourceInfoFactory::defaultResource()
             ->merge($resource_app_info);
@@ -188,6 +190,32 @@ class TracerFactory
         }
 
         return $builder->build();
+    }
+
+    /**
+     * Create ResourceInfo with version-agnostic approach.
+     *
+     * - Newer SDK (1.6+): ResourceInfo::create() accepts plain array
+     * - Older SDK (1.2-1.5): requires AttributesInterface
+     *
+     * Detects at runtime via reflection, caches the result.
+     */
+    protected static $resourceAcceptsArray = null;
+
+    public static function createResourceInfo(array $attributes): ResourceInfo
+    {
+        if (self::$resourceAcceptsArray === null) {
+            $ref = new \ReflectionMethod(ResourceInfo::class, 'create');
+            $param = $ref->getParameters()[0] ?? null;
+            self::$resourceAcceptsArray = $param && $param->getType() && $param->getType()->getName() === 'array';
+        }
+
+        if (self::$resourceAcceptsArray) {
+            return ResourceInfo::create($attributes);
+        }
+
+        // Older SDK requires AttributesInterface
+        return ResourceInfo::create(Attributes::create($attributes));
     }
 
     /**

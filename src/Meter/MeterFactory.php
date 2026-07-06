@@ -6,6 +6,7 @@ use OpenTelemetry\SDK\Metrics\MeterProvider;
 use OpenTelemetry\SDK\Metrics\MetricReader\ExportingReader;
 use OpenTelemetry\Contrib\Otlp\MetricExporter;
 use OpenTelemetry\SDK\Resource\ResourceInfo;
+use OpenTelemetry\SDK\Common\Attribute\Attributes;
 use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 
@@ -97,8 +98,8 @@ class MeterFactory
         $resource = ResourceInfoFactory::defaultResource();
 
         $otel = config('vaahsignoz.otel');
-        // Version-agnostic: ResourceInfo::create() accepts a plain array
-        $appInfo = ResourceInfo::create([
+        // Version-agnostic: use TracerFactory's createResourceInfo helper
+        $appInfo = TracerFactory::createResourceInfo([
             'service.name' => $otel['service_name'] ?? 'laravel-app',
             'service.version' => $otel['version'] ?? '0.0.0',
             'deployment.environment' => $otel['environment'] ?? 'local',
