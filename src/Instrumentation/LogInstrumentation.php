@@ -19,6 +19,11 @@ class LogInstrumentation
 
     public function boot()
     {
+        // Config gate: respect instrumentations.log toggle
+        if (!config('vaahsignoz.instrumentations.log', true)) {
+            return;
+        }
+
         $this->vaahSignozConfig = config('vaahsignoz');
         $this->endpoint = rtrim($this->vaahSignozConfig['otel']['endpoint_logs'] ?? 'http://localhost:4318/v1/logs', '/');
 
@@ -69,7 +74,7 @@ class LogInstrumentation
                             ],
                             [
                                 'key' => 'service.version',
-                                'value' => ['stringValue' => $this->vaahSignozConfig['otel']['version']]
+                                'value' => ['stringValue' => $this->vaahSignozConfig['otel']['version'] ?? '0.0.0']
                             ],
                             [
                                 'key' => 'deployment.environment',
@@ -85,7 +90,7 @@ class LogInstrumentation
                         [
                             'scope' => [
                                 'name' => 'laravel.logs',
-                                'version' => $this->vaahSignozConfig['otel']['version']
+                                'version' => $this->vaahSignozConfig['otel']['version'] ?? '0.0.0'
                             ],
                             'logRecords' => [
                                 [
@@ -128,8 +133,8 @@ class LogInstrumentation
         // Add request information if available
         if (request()) {
             $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
-                'key' => 'http.url',
-                'value' => ['stringValue' => request()->fullUrl()]
+                'key' => 'http.target',
+                'value' => ['stringValue' => request()->path()]
             ];
             
             $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [

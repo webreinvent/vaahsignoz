@@ -3,7 +3,6 @@
 namespace WebReinvent\VaahSignoz\Instrumentation;
 
 use Illuminate\Support\Facades\Log;
-use OpenTelemetry\API\Trace\StatusCode;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use WebReinvent\VaahSignoz\Meter\MeterFactory;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
@@ -63,14 +62,22 @@ class PhpErrorInstrumentation
             'php.error.line' => (string) $line,
             'php.error.message' => $message,
         ]);
-        $span->setStatus(StatusCode::STATUS_ERROR);
+        InstrumentationHelper::setSpanStatus($span, 'error');
         $span->end();
 
         // Log
-        Log::channel('signoz')->log($level, "PHP Error: {$message} in {$file}:{$line}", [
-            'severity' => $severity,
-            'trace_id' => InstrumentationHelper::getCurrentTraceId(),
-        ]);
+        try {
+            Log::channel('signoz')->log($level, "PHP Error: {$message} in {$file}:{$line}", [
+                'severity' => $severity,
+                'trace_id' => InstrumentationHelper::getCurrentTraceId(),
+            ]);
+        } catch (\Throwable $_) {
+            // signoz channel may not be configured — log to default
+            Log::log($level, "PHP Error: {$message} in {$file}:{$line}", [
+                'severity' => $severity,
+                'trace_id' => InstrumentationHelper::getCurrentTraceId(),
+            ]);
+        }
 
         // Metric
         try {
@@ -91,13 +98,21 @@ class PhpErrorInstrumentation
             'php.error.file' => $error['file'] ?? '',
             'php.error.line' => (string) ($error['line'] ?? 0),
         ]);
-        $span->setStatus(StatusCode::STATUS_ERROR);
+        InstrumentationHelper::setSpanStatus($span, 'error');
         $span->end();
 
-        Log::channel('signoz')->critical("Fatal Error: {$error['message']} in {$error['file']}:", [
-            'line' => $error['line'],
-            'severity' => $error['type'],
-            'trace_id' => InstrumentationHelper::getCurrentTraceId(),
-        ]);
+        try {
+            Log::channel('signoz')->critical("Fatal Error: {$error['message']} in {$error['file']}:", [
+                'line' => $error['line'],
+                'severity' => $error['type'],
+                'trace_id' => InstrumentationHelper::getCurrentTraceId(),
+            ]);
+        } catch (\Throwable $_) {
+            Log::critical("Fatal Error: {$error['message']} in {$error['file']}:", [
+                'line' => $error['line'],
+                'severity' => $error['type'],
+                'trace_id' => InstrumentationHelper::getCurrentTraceId(),
+            ]);
+        }
     }
 }

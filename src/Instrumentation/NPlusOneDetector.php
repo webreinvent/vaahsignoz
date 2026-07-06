@@ -13,15 +13,15 @@ use Illuminate\Events\Terminating;
  * Detects N+1 query patterns per request.
  *
  * Algorithm:
- *   1. Track all queries per request (table + WHERE pattern).
- *   2. After each "parent" query (SELECT * FROM x, no single-key WHERE),
- *      watch for repeated single-key lookups on the same table.
- *   3. If count ≥ threshold, emit span + metric + log.
+ *   1. Track all queries per request with table name.
+ *   2. Look for repeated queries on the same table with a single-row WHERE clause
+ *      (e.g., WHERE id = ?, WHERE user_id = ?, WHERE tenant_id = ?).
+ *   3. If the same table has ≥ threshold repeated single-row queries, it's N+1.
+ *   4. Emit span + metric + log once per table per request.
  */
 class NPlusOneDetector
 {
     protected $queries = [];
-    protected $parentTables = [];
     protected $detected = [];
     protected $threshold;
 
@@ -49,61 +49,38 @@ class NPlusOneDetector
             return;
         }
 
-        // Track query
-        $this->queries[] = [
-            'table' => $table,
-            'sql' => $sql,
-            'time' => $event->time,
-            'is_single_key_lookup' => $this->isSingleKeyLookup($sql),
-        ];
-
-        // Check for N+1 pattern
-        $this->checkPattern($table);
-    }
-
-    /**
-     * Check if a table has an N+1 pattern
-     */
-    protected function checkPattern(string $table)
-    {
-        // Skip if already detected this table
+        // Skip if already detected for this table
         if (isset($this->detected[$table])) {
             return;
         }
 
-        // Find parent queries for this table
-        $parentQuery = null;
-        foreach ($this->queries as $i => $q) {
-            if ($q['table'] === $table && !$q['is_single_key_lookup']) {
-                $parentQuery = $i;
-                break;
+        // Track query
+        $this->queries[$table][] = [
+            'sql' => $sql,
+            'time' => $event->time,
+            'is_single_row_lookup' => $this->isSingleRowLookup($sql),
+        ];
+
+        // Count single-row lookups for this table
+        $queries = $this->queries[$table];
+        $singleRowCount = 0;
+
+        foreach ($queries as $q) {
+            if ($q['is_single_row_lookup']) {
+                $singleRowCount++;
             }
         }
 
-        if ($parentQuery === null) {
-            return;
-        }
-
-        // Count single-key lookups after the parent query
-        $count = 0;
-        $totalTime = 0;
-
-        for ($i = $parentQuery + 1; $i < count($this->queries); $i++) {
-            if ($this->queries[$i]['table'] === $table && $this->queries[$i]['is_single_key_lookup']) {
-                $count++;
-                $totalTime += $this->queries[$i]['time'];
+        if ($singleRowCount >= $this->threshold) {
+            $totalTime = 0;
+            foreach ($queries as $q) {
+                if ($q['is_single_row_lookup']) {
+                    $totalTime += $q['time'];
+                }
             }
-        }
 
-        if ($count >= $this->threshold) {
-            $this->detected[$table] = [
-                'parent_query_index' => $parentQuery,
-                'count' => $count,
-                'total_time_ms' => $totalTime,
-                'table' => $table,
-            ];
-
-            $this->emit($table, $count, $totalTime);
+            $this->detected[$table] = true;
+            $this->emit($table, $singleRowCount, $totalTime);
         }
     }
 
@@ -112,13 +89,14 @@ class NPlusOneDetector
      */
     protected function emit(string $table, int $count, float $totalTime)
     {
-        $route = request()->route()->getName() ?? request()->path() ?? 'unknown';
+        $route = request() && request()->route()
+            ? (request()->route()->getName() ?? request()->path())
+            : 'artisan';
 
         // Span
         if (config('vaahsignoz.n_plus_one.span', true)) {
             $span = TracerFactory::createSpan('db.n_plus_one', [
-                'db.n_plus_one.parent_table' => $table,
-                'db.n_plus_one.child_table' => $table,
+                'db.n_plus_one.table' => $table,
                 'db.n_plus_one.count' => $count,
                 'db.n_plus_one.total_time_ms' => round($totalTime, 2),
                 'http.route' => $route,
@@ -128,35 +106,50 @@ class NPlusOneDetector
 
         // Metric
         if (config('vaahsignoz.n_plus_one.metric', true)) {
-            MeterFactory::counter('db.n_plus_one.total')
-                ->add(1, [
-                    'table' => $table,
-                    'route' => $route,
-                ]);
+            try {
+                MeterFactory::counter('db.n_plus_one.total')
+                    ->add(1, [
+                        'table' => $table,
+                        'route' => $route,
+                    ]);
+            } catch (\Throwable $_) {
+                // Meter may not be ready
+            }
         }
 
         // Log
         if (config('vaahsignoz.n_plus_one.log', true)) {
-            Log::channel('signoz')->warning(
-                "N+1 query detected on `{$table}` table — {$count} queries in request to '{$route}'",
-                [
-                    'table' => $table,
-                    'count' => $count,
-                    'total_time_ms' => round($totalTime, 2),
-                    'route' => $route,
-                    'threshold' => $this->threshold,
-                ]
-            );
+            try {
+                Log::channel('signoz')->warning(
+                    "N+1 query detected on `{$table}` table — {$count} queries in request to '{$route}'",
+                    [
+                        'table' => $table,
+                        'count' => $count,
+                        'total_time_ms' => round($totalTime, 2),
+                        'route' => $route,
+                        'threshold' => $this->threshold,
+                    ]
+                );
+            } catch (\Throwable $_) {
+                Log::warning(
+                    "N+1 query detected on `{$table}` table — {$count} queries in request to '{$route}'",
+                    [
+                        'table' => $table,
+                        'count' => $count,
+                        'total_time_ms' => round($totalTime, 2),
+                        'threshold' => $this->threshold,
+                    ]
+                );
+            }
         }
     }
 
     /**
-     * Handle Laravel's Terminating event — reset state
+     * Handle Laravel's Terminating event — reset state for next request
      */
     public function handleTerminating()
     {
         $this->queries = [];
-        $this->parentTables = [];
         $this->detected = [];
     }
 
@@ -171,17 +164,60 @@ class NPlusOneDetector
 
     protected function extractTable(string $sql): ?string
     {
-        // "FROM `table`" or "FROM table" or "into `table`"
-        if (preg_match('/(?:FROM|INTO|UPDATE)\s+[`"\']?(\w+)[`"\']?/i', $sql, $matches)) {
-            return $matches[1];
+        // "FROM `table`" or "FROM table" or "into `table`" or "UPDATE `table`"
+        if (preg_match('/(?:FROM|INTO|UPDATE|JOIN)\s+[`"\[]?(\w+)[`"\]]?/i', $sql, $matches)) {
+            return strtolower($matches[1]);
         }
 
         return null;
     }
 
-    protected function isSingleKeyLookup(string $sql): bool
+    /**
+     * Check if SQL is a single-row lookup — i.e., WHERE clause with
+     * a single equality condition on a column that looks like a key
+     * (id, *_id, primary key patterns).
+     *
+     * Handles qualified column names (table.column) — Laravel Eloquent
+     * generates `WHERE users.id = ?` not `WHERE id = ?`.
+     *
+     * Matches:
+     *   WHERE `id` = ?
+     *   WHERE users.id = ?
+     *   WHERE `user_id` = ?
+     *   WHERE posts.author_id = ?
+     *   WHERE email = ?
+     *   WHERE slug = ?
+     *   WHERE users.deleted_at IS NULL AND users.id = ? (AND fallback)
+     */
+    protected function isSingleRowLookup(string $sql): bool
     {
-        // Look for WHERE id = ? or WHERE `id` = ? patterns
-        return (bool) preg_match('/WHERE\s+`?id`?\s*=/', $sql, $matches);
+        $column = null;
+
+        // Match WHERE [table.]column = ? (qualified or unqualified)
+        if (preg_match('/WHERE\s+[`"\[]?(?:\w+\.)?(\w+)[`"\]]?\s*=\s*[\?\$]/i', $sql, $m)) {
+            $column = $m[1];
+        }
+        // Fallback: match AND [table.]column = ? (compound WHERE clauses)
+        elseif (preg_match('/\bAND\s+[`"\[]?(?:\w+\.)?(\w+)[`"\]]?\s*=\s*[\?\$]/i', $sql, $m)) {
+            $column = $m[1];
+        }
+
+        if (!$column) {
+            return false;
+        }
+
+        // Check it's a key-like column: id, *_id, email, slug, uuid, token, code
+        $keyColumns = ['id', 'email', 'slug', 'uuid', 'token', 'code', 'username', 'phone'];
+
+        if (in_array($column, $keyColumns, true)) {
+            return true;
+        }
+
+        // Also match *_id pattern (user_id, tenant_id, post_id, etc.)
+        if (str_ends_with($column, '_id')) {
+            return true;
+        }
+
+        return false;
     }
 }

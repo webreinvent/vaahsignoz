@@ -3,9 +3,9 @@
 namespace WebReinvent\VaahSignoz\Instrumentation;
 
 use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Contracts\Debug\ExceptionHandler as ExceptionHandlerContract;
-use OpenTelemetry\API\Trace\StatusCode;
+use Throwable;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use WebReinvent\VaahSignoz\Meter\MeterFactory;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
@@ -22,12 +22,68 @@ class DatabaseErrorInstrumentation
             return;
         }
 
-        // Register with Laravel's exception handler
-        if (app()->bound(ExceptionHandlerContract::class)) {
-            app(ExceptionHandlerContract::class)->report(function (QueryException $e) {
-                $this->captureDatabaseError($e);
-            });
+        // Use DB::listen() to capture slow queries and error indicators.
+        // QueryExceptions are caught by the global exception handler
+        // (ExceptionInstrumentation), so we augment them with db-specific
+        // classification by wrapping the listener.
+        $this->registerQueryErrorListener();
+    }
+
+    /**
+     * Register listeners to capture database query errors and slow queries.
+     */
+    protected function registerQueryErrorListener()
+    {
+        $threshold = config('vaahsignoz.database.slow_query_threshold_ms', 100);
+
+        DB::listen(function ($data) use ($threshold) {
+            // Capture slow queries
+            if ($data->time >= $threshold) {
+                $this->captureSlowQuery($data);
+            }
+        });
+    }
+
+    /**
+     * Capture a slow query as a span + metric.
+     */
+    public function captureSlowQuery($data)
+    {
+        $driverName = 'unknown';
+
+        try {
+            $driverName = DB::getDriverName() ?? 'unknown';
+        } catch (\Throwable $_) {
+            // Connection may be gone
         }
+
+        $span = TracerFactory::createSpan('db.slow_query', [
+            'db.system' => $driverName,
+            'db.statement' => $data->sql ?? '',
+            'db.duration_ms' => $data->time,
+            'db.connection_name' => $data->connectionName ?? 'default',
+        ]);
+        InstrumentationHelper::setSpanStatus($span, 'ok');
+        $span->end();
+
+        // Increment metric
+        try {
+            MeterFactory::counter('db.slow_queries.total')->add(1, [
+                'db.system' => $driverName,
+                'route' => request() && request()->route() ? (request()->route()->getName() ?? request()->route()->uri() ?? '') : '',
+            ]);
+        } catch (\Throwable $_) {
+            // Meter may not be ready
+        }
+    }
+
+    /**
+     * Handle a QueryException that was caught by the global exception handler.
+     * This is called by ExceptionInstrumentation when it encounters a QueryException.
+     */
+    public function handleQueryException(QueryException $e)
+    {
+        $this->captureDatabaseError($e);
     }
 
     public function captureDatabaseError(QueryException $e)
@@ -54,7 +110,7 @@ class DatabaseErrorInstrumentation
             'exception.code' => $e->getCode(),
             'db.error_type' => $errorType,
         ]);
-        $span->setStatus(StatusCode::STATUS_ERROR);
+        InstrumentationHelper::setSpanStatus($span, 'error');
 
         if ($e->getPrevious()) {
             $span->recordException($e->getPrevious());
@@ -75,15 +131,24 @@ class DatabaseErrorInstrumentation
         // Log
         $logLevel = config('vaahsignoz.database.error_log_level', 'critical');
 
-        Log::channel('signoz')->log($logLevel, "Database error [{$errorType}]: {$e->getMessage()}", [
-            'sql' => $e->getSql(),
-            'bindings' => $e->getBindings(),
-            'error_type' => $errorType,
-            'code' => $e->getCode(),
-            'connection' => $connection,
-            'driver' => $driverName,
-            'trace_id' => InstrumentationHelper::getCurrentTraceId(),
-        ]);
+        try {
+            Log::channel('signoz')->log($logLevel, "Database error [{$errorType}]: {$e->getMessage()}", [
+                'sql' => $e->getSql(),
+                'bindings' => $e->getBindings(),
+                'error_type' => $errorType,
+                'code' => $e->getCode(),
+                'connection' => $connection,
+                'driver' => $driverName,
+                'trace_id' => InstrumentationHelper::getCurrentTraceId(),
+            ]);
+        } catch (\Throwable $_) {
+            Log::log($logLevel, "Database error [{$errorType}]: {$e->getMessage()}", [
+                'sql' => $e->getSql(),
+                'bindings' => $e->getBindings(),
+                'error_type' => $errorType,
+                'trace_id' => InstrumentationHelper::getCurrentTraceId(),
+            ]);
+        }
     }
 
     /**

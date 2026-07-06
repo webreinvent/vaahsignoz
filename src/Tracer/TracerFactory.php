@@ -3,19 +3,17 @@
 namespace WebReinvent\VaahSignoz\Tracer;
 
 use OpenTelemetry\Contrib\Otlp\SpanExporter;
-use OpenTelemetry\SDK\Common\Export\Http\PsrTransport;
 use OpenTelemetry\SDK\Common\Export\Http\PsrTransportFactory;
 use OpenTelemetry\Contrib\Otlp\ContentTypes;
 use GuzzleHttp\Client;
 use OpenTelemetry\SDK\Resource\ResourceInfo;
+use OpenTelemetry\SDK\Common\Attribute\Attributes;
 use OpenTelemetry\SDK\Trace\SpanProcessor\BatchSpanProcessorBuilder;
 use OpenTelemetry\SDK\Trace\SpanProcessor\SimpleSpanProcessor;
 use OpenTelemetry\SDK\Trace\TracerProvider;
 use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
-use OpenTelemetry\SDK\Common\Attribute\Attributes;
 use OpenTelemetry\API\Trace\SpanInterface;
 use OpenTelemetry\API\Trace\SpanContextInterface;
-use GuzzleHttp\Psr7\HttpFactory;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 
 class TracerFactory
@@ -24,7 +22,6 @@ class TracerFactory
     protected static $tracerProvider = null;
     protected static $currentSpan = null;
     protected static $sharedClient = null;
-    protected static $meterProvider = null;
 
     /* ----------------------------------------------------------------- */
     /*  Config                                                            */
@@ -56,7 +53,7 @@ class TracerFactory
     /*  Shared HTTP Client (connection pooling)                          */
     /* ----------------------------------------------------------------- */
 
-    protected static function getSharedClient(): Client
+    public static function getSharedClient(): Client
     {
         if (self::$sharedClient === null) {
             $otel = config('vaahsignoz.otel');
@@ -73,23 +70,26 @@ class TracerFactory
     /*  Transport / Exporter                                             */
     /* ----------------------------------------------------------------- */
 
+    /**
+     * Create a transport for a given endpoint using PsrTransportFactory.
+     * Uses the factory pattern recommended by OTel PHP docs to avoid
+     * constructor signature changes across SDK versions.
+     *
+     * PsrTransportFactory::discover() auto-discovers the PSR-18 HTTP client
+     * (Guzzle, Symfony, etc.), eliminating constructor signature issues.
+     */
+    public static function createTransport(string $endpoint)
+    {
+        return PsrTransportFactory::discover()->create(
+            $endpoint,
+            ContentTypes::PROTOBUF
+        );
+    }
+
     public static function getTransport()
     {
         $setup = self::getSetupConfig();
-        $client = self::getSharedClient();
-        $httpFactory = new HttpFactory();
-
-        return new PsrTransport(
-            $client,
-            $httpFactory,
-            $httpFactory,
-            $setup['endpoint'],
-            'application/x-protobuf',
-            [],
-            [],
-            100,  // retryDelay ms
-            3     // maxRetries
-        );
+        return self::createTransport($setup['endpoint']);
     }
 
     public static function getExporter()
@@ -114,7 +114,11 @@ class TracerFactory
 
         $exporter = self::getExporter();
 
-        $resource_app_info = ResourceInfo::create(Attributes::create($resource_attributes));
+        // Version-agnostic resource creation: ResourceInfo::create()
+        // - Older SDK: expects AttributesInterface
+        // - Newer SDK: accepts plain array
+        // Detect at runtime via reflection.
+        $resource_app_info = self::createResourceInfo($resource_attributes);
 
         $resource = ResourceInfoFactory::defaultResource()
             ->merge($resource_app_info);
@@ -123,17 +127,95 @@ class TracerFactory
         $sampler = self::createSampler();
 
         // BatchSpanProcessor for performance (buffers spans, exports in batches)
-        $processor = (new BatchSpanProcessorBuilder($exporter))->build();
+        // Support both old BatchSpanProcessorBuilder (1.x) and new BatchSpanProcessor::builder() patterns
+        $processor = self::createBatchSpanProcessor($exporter);
 
-        $tracerProvider = new TracerProvider(
-            $processor,
-            $sampler,
-            $resource
-        );
+        // Use builder pattern (TracerProvider::builder) if available (SDK 1.7+),
+        // otherwise fall back to direct constructor for older versions.
+        if (method_exists(TracerProvider::class, 'builder')) {
+            $tracerProvider = TracerProvider::builder()
+                ->addSpanProcessor($processor)
+                ->setResource($resource)
+                ->setSampler($sampler)
+                ->build();
+        } else {
+            $tracerProvider = new TracerProvider(
+                $processor,
+                $sampler,
+                $resource
+            );
+        }
 
         self::$tracerProvider = $tracerProvider;
 
         return $tracerProvider;
+    }
+
+    /**
+     * Create BatchSpanProcessor with version-agnostic approach.
+     * Supports both BatchSpanProcessorBuilder (1.x old) and BatchSpanProcessor::builder() (1.x new).
+     */
+    protected static function createBatchSpanProcessor($exporter)
+    {
+        $batchConfig = config('vaahsignoz.otel');
+
+        // Try BatchSpanProcessor::builder() (newer 1.x API)
+        if (method_exists(\OpenTelemetry\SDK\Trace\SpanProcessor\BatchSpanProcessor::class, 'builder')) {
+            $builder = \OpenTelemetry\SDK\Trace\SpanProcessor\BatchSpanProcessor::builder($exporter);
+
+            if (method_exists($builder, 'setMaxExportBatchSize')) {
+                $builder->setMaxExportBatchSize((int) ($batchConfig['batch_max_size'] ?? 512));
+            }
+            if (method_exists($builder, 'setScheduleDelay')) {
+                $builder->setScheduleDelay((int) ($batchConfig['batch_timeout'] ?? 5000));
+            }
+            if (method_exists($builder, 'setExportTimeout')) {
+                $builder->setExportTimeout((int) ($batchConfig['export_timeout'] ?? 3000));
+            }
+
+            return $builder->build();
+        }
+
+        // Fallback: BatchSpanProcessorBuilder (older 1.x API)
+        $builder = new BatchSpanProcessorBuilder($exporter);
+
+        if (method_exists($builder, 'setMaxExportBatchSize')) {
+            $builder->setMaxExportBatchSize((int) ($batchConfig['batch_max_size'] ?? 512));
+        }
+        if (method_exists($builder, 'setScheduleDelay')) {
+            $builder->setScheduleDelay((int) ($batchConfig['batch_timeout'] ?? 5000));
+        }
+        if (method_exists($builder, 'setExportTimeout')) {
+            $builder->setExportTimeout((int) ($batchConfig['export_timeout'] ?? 3000));
+        }
+
+        return $builder->build();
+    }
+
+    /**
+     * Create ResourceInfo with version-agnostic approach.
+     *
+     * - Newer SDK (1.6+): ResourceInfo::create() accepts plain array
+     * - Older SDK (1.2-1.5): requires AttributesInterface
+     *
+     * Detects at runtime via reflection, caches the result.
+     */
+    protected static $resourceAcceptsArray = null;
+
+    public static function createResourceInfo(array $attributes): ResourceInfo
+    {
+        if (self::$resourceAcceptsArray === null) {
+            $ref = new \ReflectionMethod(ResourceInfo::class, 'create');
+            $param = $ref->getParameters()[0] ?? null;
+            self::$resourceAcceptsArray = $param && $param->getType() && $param->getType()->getName() === 'array';
+        }
+
+        if (self::$resourceAcceptsArray) {
+            return ResourceInfo::create($attributes);
+        }
+
+        // Older SDK requires AttributesInterface
+        return ResourceInfo::create(Attributes::create($attributes));
     }
 
     /**
@@ -183,7 +265,12 @@ class TracerFactory
     public static function shutdown(): void
     {
         if (self::$tracerProvider !== null) {
-            self::$tracerProvider->shutdown();
+            // version-agnostic: shutdown() or forceFlush() depending on SDK version
+            if (method_exists(self::$tracerProvider, 'shutdown')) {
+                self::$tracerProvider->shutdown();
+            } elseif (method_exists(self::$tracerProvider, 'forceFlush')) {
+                self::$tracerProvider->forceFlush();
+            }
         }
     }
 
@@ -250,7 +337,28 @@ class TracerFactory
         }
 
         foreach ($attributes as $key => $value) {
-            $spanBuilder->setAttribute($key, $value);
+            // OTel attributes must be scalar (string, bool, int, float) or arrays thereof
+            if (is_scalar($value) || ($value === null)) {
+                $spanBuilder->setAttribute($key, $value);
+            } elseif (is_array($value)) {
+                // Arrays of scalars are allowed
+                $allScalar = true;
+                foreach ($value as $item) {
+                    if (!is_scalar($item) && $item !== null) {
+                        $allScalar = false;
+                        break;
+                    }
+                }
+                if ($allScalar) {
+                    $spanBuilder->setAttribute($key, $value);
+                } else {
+                    // Fallback: serialize non-scalar arrays
+                    $spanBuilder->setAttribute($key, json_encode($value));
+                }
+            } else {
+                // Non-scalar value — serialize to string
+                $spanBuilder->setAttribute($key, is_object($value) ? get_class($value) : (string) $value);
+            }
         }
 
         $span = $spanBuilder->startSpan();

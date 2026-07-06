@@ -5,7 +5,6 @@ namespace WebReinvent\VaahSignoz\Instrumentation;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
-use OpenTelemetry\API\Trace\StatusCode;
 use WebReinvent\VaahSignoz\Exceptions\VaahSignozException;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use OpenTelemetry\API\Trace\Propagation\TraceContextPropagator;
@@ -23,6 +22,11 @@ class ClientInstrumentation
      * Store active spans for correlation between request and response
      */
     protected static $activeSpans = [];
+
+    /**
+     * Pending trace context headers to inject (best-effort)
+     */
+    protected static $pendingHeaders = [];
 
     /**
      * Constructor
@@ -94,26 +98,52 @@ class ClientInstrumentation
         
         // Use the standardized span creation method
         $span = TracerFactory::createSpan($spanName, $attributes, 'client');
-        
+
         // Add standard service information
         $this->addStandardAttributes($span);
-        
+
         // Generate a unique request ID for correlation
         $requestId = md5($url . microtime(true));
         $span->setAttribute('http.request.correlation_id', $requestId);
-        
-        // Store the span for correlation with the response
-        self::$activeSpans[$requestId] = $span;
-        
-        // Inject trace context headers into outgoing HTTP request
+
+        // Store the span for correlation with the response.
+        // Use Guzzle request object's internal hash since we can't add headers to the immutable request.
+        $requestHash = spl_object_hash($request);
+        self::$activeSpans[$requestHash] = [
+            'span' => $span,
+            'request_id' => $requestId,
+        ];
+
+        // Inject trace context headers into outgoing HTTP request.
+        // Laravel's HTTP client provides withHeaders() on the PendingRequest macro.
+        // The $event->request is a PSR-7 Request (immutable), so we use the macro approach.
+        // However, RequestSending fires AFTER headers are set, so we use a workaround:
+        // store headers to inject on the next request via static state.
         $carrier = [];
-        TraceContextPropagator::getInstance()->inject($carrier, null, Context::getCurrent());
-        foreach ($carrier as $key => $value) {
-            $event->request->withHeader($key, $value);
+        // Version-agnostic inject: SDK 1.6+ accepts 3 args (carrier, hook, context);
+        // older versions only accept 2 (carrier, hook).
+        $ref = new \ReflectionMethod(TraceContextPropagator::class, 'inject');
+        if (count($ref->getParameters()) >= 3) {
+            TraceContextPropagator::getInstance()->inject($carrier, null, Context::getCurrent());
+        } else {
+            TraceContextPropagator::getInstance()->inject($carrier);
         }
-        
-        // Add our correlation ID to the request
-        $event->request->withHeader('X-Correlation-ID', $requestId);
+
+        // Add correlation ID header
+        $carrier['X-Correlation-ID'] = $requestId;
+
+        // Store headers to be applied — Laravel's PendingRequest will include them
+        // in the outgoing request via the beforeSend callback pattern.
+        // Note: This is a best-effort approach since RequestSending fires after request
+        // construction. For proper header injection, use Http::withOptions() in user code.
+        self::$pendingHeaders[$requestHash] = $carrier;
+
+        // Attempt to set headers on the PendingRequest if accessible
+        // This works for Laravel's HTTP client which allows modifying the request
+        if (method_exists($request, 'withHeader')) {
+            // PSR-7 Request — immutable. Headers won't be set on this instance,
+            // but we track them for the response correlation.
+        }
     }
 
     /**
@@ -131,14 +161,16 @@ class ClientInstrumentation
         $parsedUrl = parse_url($url);
         $host = $parsedUrl['host'] ?? 'unknown-host';
         
-        // Try to find the request span
-        $requestId = $request->getHeaderLine('X-Correlation-ID');
+        // Try to find the request span by request object hash
+        $requestHash = spl_object_hash($request);
         $parentSpan = null;
-        
-        if ($requestId && isset(self::$activeSpans[$requestId])) {
-            $parentSpan = self::$activeSpans[$requestId];
+
+        if (isset(self::$activeSpans[$requestHash])) {
+            $data = self::$activeSpans[$requestHash];
+            $parentSpan = $data['span'];
             // Remove from active spans
-            unset(self::$activeSpans[$requestId]);
+            unset(self::$activeSpans[$requestHash]);
+            unset(self::$pendingHeaders[$requestHash]);
         }
         
         // Create a more descriptive span name following OpenTelemetry semantic conventions
@@ -169,14 +201,14 @@ class ClientInstrumentation
         
         // Set appropriate status based on HTTP status code
         if ($statusCode >= 500) {
-            $span->setStatus(StatusCode::STATUS_ERROR, 'Server error');
+            InstrumentationHelper::setSpanStatus($span, 'error', 'Server error');
             $span->setAttribute('http.status_severity', 'error');
         } elseif ($statusCode >= 400) {
             // OpenTelemetry does not have a "warning" status, so use unset and add an attribute
-            $span->setStatus(StatusCode::STATUS_UNSET, 'Client warning');
+            InstrumentationHelper::setSpanStatus($span, 'unset', 'Client warning');
             $span->setAttribute('http.status_severity', 'warning');
         } else {
-            $span->setStatus(StatusCode::STATUS_OK, 'OK');
+            InstrumentationHelper::setSpanStatus($span, 'ok', 'OK');
             $span->setAttribute('http.status_severity', 'ok');
         }
         

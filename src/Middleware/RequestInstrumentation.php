@@ -4,7 +4,6 @@ namespace WebReinvent\VaahSignoz\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use OpenTelemetry\API\Trace\StatusCode;
 use WebReinvent\VaahSignoz\Tracer\TracerFactory;
 use WebReinvent\VaahSignoz\Helpers\InstrumentationHelper;
 use WebReinvent\VaahSignoz\Instrumentation\HttpMetrics;
@@ -104,7 +103,7 @@ class RequestInstrumentation
             $span->setAttribute('process.peak_memory_usage_bytes', memory_get_peak_usage(true));
 
             // Record HTTP metrics
-            $route = $request->route()->getName() ?? $request->path();
+            $route = $request->route() ? ($request->route()->getName() ?? $request->path()) : $request->path();
             HttpMetrics::record(
                 $request->method(),
                 $route,
@@ -131,12 +130,10 @@ class RequestInstrumentation
                 $span->setAttribute('http.status_text', 'Internal Server Error');
             }
 
-            if (class_exists(StatusCode::class)) {
-                $span->setStatus(StatusCode::STATUS_ERROR, $e->getMessage());
-            }
+            InstrumentationHelper::setSpanStatus($span, 'error', $e->getMessage());
 
             // Record error metric
-            $route = $request->route()->getName() ?? $request->path();
+            $route = $request->route() ? ($request->route()->getName() ?? $request->path()) : $request->path();
             HttpMetrics::record(
                 $request->method(),
                 $route,
