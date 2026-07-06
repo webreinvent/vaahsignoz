@@ -133,8 +133,8 @@ class LogInstrumentation
         // Add request information if available
         if (request()) {
             $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [
-                'key' => 'http.url',
-                'value' => ['stringValue' => request()->fullUrl()]
+                'key' => 'http.target',
+                'value' => ['stringValue' => request()->path()]
             ];
             
             $logData['resourceLogs'][0]['scopeLogs'][0]['logRecords'][0]['attributes'][] = [

@@ -32,5 +32,8 @@
         }
     },
     "minimum-stability": "dev",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "suggest": {
+        "ext-protobuf": "Recommended for significantly faster OTLP export performance"
+    }
 }

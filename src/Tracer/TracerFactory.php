@@ -72,9 +72,12 @@ class TracerFactory
     /*  Transport / Exporter                                             */
     /* ----------------------------------------------------------------- */
 
-    public static function getTransport()
+    /**
+     * Create a PsrTransport for a given endpoint.
+     * Shared helper to avoid duplicated transport construction.
+     */
+    public static function createTransport(string $endpoint): PsrTransport
     {
-        $setup = self::getSetupConfig();
         $client = self::getSharedClient();
         $httpFactory = new HttpFactory();
 
@@ -82,13 +85,19 @@ class TracerFactory
             $client,
             $httpFactory,
             $httpFactory,
-            $setup['endpoint'],
+            $endpoint,
             'application/x-protobuf',
             [],
             [],
             100,  // retryDelay ms
             3     // maxRetries
         );
+    }
+
+    public static function getTransport()
+    {
+        $setup = self::getSetupConfig();
+        return self::createTransport($setup['endpoint']);
     }
 
     public static function getExporter()
@@ -122,7 +131,12 @@ class TracerFactory
         $sampler = self::createSampler();
 
         // BatchSpanProcessor for performance (buffers spans, exports in batches)
-        $processor = (new BatchSpanProcessorBuilder($exporter))->build();
+        $batchConfig = config('vaahsignoz.otel');
+        $processor = (new BatchSpanProcessorBuilder($exporter))
+            ->setScheduleDelay((int) ($batchConfig['batch_timeout'] ?? 5000))
+            ->setExportTimeout((int) ($batchConfig['export_timeout'] ?? 3000))
+            ->setMaxExportBatchSize((int) ($batchConfig['batch_max_size'] ?? 512))
+            ->build();
 
         $tracerProvider = new TracerProvider(
             $processor,

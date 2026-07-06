@@ -30,8 +30,8 @@ class QueryInstrumentation
 
             if (config('vaahsignoz.database.capture_slow_queries', true)) {
                 try {
-                    DB::whenQueryingForLongerThan($this->slowThreshold, function ($connection, $event) {
-                        $this->handleSlowQuery($connection, $event);
+                    DB::whenQueryingForLongerThan($this->slowThreshold, function ($event) {
+                        $this->handleSlowQuery($event);
                     });
                 } catch (\Throwable $e) {
                     // whenQueryingForLongerThan may not exist on all Laravel versions
@@ -44,13 +44,13 @@ class QueryInstrumentation
 
     public function handleQuery(QueryExecuted $event)
     {
-        $tracer = TracerFactory::getTracer();
-        $span = $tracer->spanBuilder('db.query')->startSpan();
-        $span->setAttribute('db.system', $event->connection->getDriverName());
-        $span->setAttribute('db.statement', $event->sql);
-        $span->setAttribute('db.bindings', json_encode($event->bindings));
-        $span->setAttribute('db.time', $event->time);
-        $span->setAttribute('db.connection_name', $event->connectionName);
+        $span = TracerFactory::createSpan('db.query', [
+            'db.system' => $event->connection->getDriverName(),
+            'db.statement' => $event->sql,
+            'db.bindings' => json_encode($event->bindings),
+            'db.time' => $event->time,
+            'db.connection_name' => $event->connectionName,
+        ]);
         $span->end();
 
         // Metrics
@@ -60,7 +60,7 @@ class QueryInstrumentation
     /**
      * Handle slow query — create span + metric + log
      */
-    protected function handleSlowQuery($connection, $event)
+    protected function handleSlowQuery($event)
     {
         $route = request() && request()->route() ? (request()->route()->getName() ?? request()->path()) : 'artisan';
 

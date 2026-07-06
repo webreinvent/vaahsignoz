@@ -3,11 +3,7 @@
 namespace WebReinvent\VaahSignoz\Meter;
 
 use OpenTelemetry\SDK\Metrics\MeterProvider;
-use OpenTelemetry\SDK\Metrics\MeterProviderBuilder;
 use OpenTelemetry\SDK\Metrics\MetricReader\ExportingReader;
-use OpenTelemetry\SDK\Common\Export\Http\PsrTransport;
-use GuzzleHttp\Client;
-use GuzzleHttp\Psr7\HttpFactory;
 use OpenTelemetry\Contrib\Otlp\MetricExporter;
 use OpenTelemetry\SDK\Resource\ResourceInfo;
 use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
@@ -91,21 +87,7 @@ class MeterFactory
         $config = config('vaahsignoz.otel');
         $endpoint = str_replace('/v1/traces', '/v1/metrics', $config['endpoint'] ?? 'http://localhost:4318/v1/traces');
 
-        // Reuse shared HTTP client from TracerFactory for connection pooling
-        $client = TracerFactory::getSharedClient();
-        $httpFactory = new HttpFactory();
-
-        return new PsrTransport(
-            $client,
-            $httpFactory,
-            $httpFactory,
-            $endpoint,
-            'application/x-protobuf',
-            [],
-            [],
-            100,
-            3
-        );
+        return TracerFactory::createTransport($endpoint);
     }
 
     /* ----------------------------------------------------------------- */

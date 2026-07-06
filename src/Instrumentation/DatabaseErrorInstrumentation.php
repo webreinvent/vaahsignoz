@@ -71,7 +71,7 @@ class DatabaseErrorInstrumentation
         try {
             MeterFactory::counter('db.slow_queries.total')->add(1, [
                 'db.system' => $driverName,
-                'route' => request() && request()->route() ? (request()->route()->getName() ?? request()->route()->uri()) : '',
+                'route' => request() && request()->route() ? (request()->route()->getName() ?? request()->route()->uri() ?? '') : '',
             ]);
         } catch (\Throwable $_) {
             // Meter may not be ready
