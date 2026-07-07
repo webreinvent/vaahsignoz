@@ -74,7 +74,7 @@ class ClientInstrumentation
         // Format: http.client.<method>.<host>
         $spanName = 'http.client.' . strtolower($method) . '.' . $host;
         
-        // Prepare attributes for the span
+        // Prepare attributes for the span (PSR-7: getHeader() returns array, not string)
         $attributes = [
             'http.url' => $url,
             'http.method' => $method,
@@ -83,21 +83,29 @@ class ClientInstrumentation
             'http.target' => $path,
             'net.peer.name' => $host,
             'net.peer.port' => $port,
-            'http.user_agent' => $request->getHeaderLine('User-Agent'),
-            'http.request_id' => $request->getHeaderLine('X-Request-ID'),
             'span.kind' => 'client',
         ];
-        
+
+        // PSR-7 getHeader() returns array of values — join for scalar attribute
+        $ua = $request->getHeader('User-Agent');
+        if ($ua) {
+            $attributes['http.user_agent'] = implode(', ', $ua);
+        }
+
+        $reqId = $request->getHeader('X-Request-ID');
+        if ($reqId) {
+            $attributes['http.request_id'] = implode(', ', $reqId);
+        }
+
         // Add request headers as attributes (excluding sensitive ones)
         foreach ($request->getHeaders() as $name => $values) {
-            // Skip sensitive headers
             if (!in_array(strtolower($name), ['authorization', 'cookie', 'x-api-key'])) {
                 $attributes['http.request.header.' . strtolower($name)] = implode(', ', $values);
             }
         }
-        
-        // Use the standardized span creation method
-        $span = TracerFactory::createSpan($spanName, $attributes, 'client');
+
+        // Use the standardized span creation method (SpanKind::KIND_CLIENT for older SDK)
+        $span = TracerFactory::createSpan($spanName, $attributes, \OpenTelemetry\API\Trace\SpanKind::KIND_CLIENT);
 
         // Add standard service information
         $this->addStandardAttributes($span);
@@ -193,8 +201,8 @@ class ClientInstrumentation
             }
         }
         
-        // Use the standardized span creation method
-        $span = TracerFactory::createSpan($spanName, $attributes, 'client', $parentSpan);
+        // Use the standardized span creation method (SpanKind::KIND_CLIENT for older SDK)
+        $span = TracerFactory::createSpan($spanName, $attributes, \OpenTelemetry\API\Trace\SpanKind::KIND_CLIENT, $parentSpan);
         
         // Add standard service information
         $this->addStandardAttributes($span);
