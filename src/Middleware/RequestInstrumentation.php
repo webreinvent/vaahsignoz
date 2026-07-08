@@ -34,7 +34,7 @@ class RequestInstrumentation
                 'http.request_content_length' => $request->header('Content-Length') ?? 0,
                 'http.request_content_type' => $request->header('Content-Type') ?? 'unknown',
             ],
-            \OpenTelemetry\API\Trace\SpanKind::SPAN_KIND_SERVER
+            \OpenTelemetry\API\Trace\SpanKind::KIND_SERVER
         );
 
         // Add route information if available
